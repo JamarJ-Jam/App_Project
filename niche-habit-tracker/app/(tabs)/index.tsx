@@ -202,8 +202,11 @@ export default function App() {
         contentContainerStyle={styles.listContainer}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No habits found.</Text>
-            <Text style={styles.emptySubtext}>Tap the button below to create one!</Text>
+            <Text style={{ fontSize: 48, marginBottom: 12 }}>🎯</Text>
+            <Text style={styles.emptyText}>
+              {selectedCategory === 'All' ? 'No habits added yet' : `No habits under "${selectedCategory}"`}
+            </Text>
+            <Text style={styles.emptySubtext}>Tap the + button below to get started!</Text>
           </View>
         }
         renderItem={({ item }) => (

@@ -1,10 +1,12 @@
 import React from 'react';
 import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { getCategoryColor } from '../utils/colors';
 
 export default function HabitCard({ item, onOpenEdit, onDelete, onToggle }) {
+  const categoryColor = getCategoryColor(item.category);
+
   const handleCheckmarkPress = () => {
-    // Trigger medium physical haptic feedback on completion
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     onToggle(item.id);
   };
@@ -19,11 +21,18 @@ export default function HabitCard({ item, onOpenEdit, onDelete, onToggle }) {
       }}
       activeOpacity={0.7}
     >
+      {/* Category Accent Border */}
+      <View style={[styles.accentStrip, { backgroundColor: categoryColor }]} />
+
       <View style={styles.habitInfo}>
         <Text style={[styles.habitTitle, item.completed && styles.habitTitleCompleted]}>
           {item.title}
         </Text>
-        <Text style={styles.habitCategory}>{item.category}</Text>
+        <View style={styles.categoryBadge}>
+          <Text style={[styles.habitCategory, { color: categoryColor }]}>
+            {item.category || 'General'}
+          </Text>
+        </View>
       </View>
 
       <View style={styles.habitRight}>
@@ -32,7 +41,10 @@ export default function HabitCard({ item, onOpenEdit, onDelete, onToggle }) {
         </View>
 
         <TouchableOpacity
-          style={[styles.checkbox, item.completed && styles.checkboxCompleted]}
+          style={[
+            styles.checkbox,
+            item.completed && { backgroundColor: categoryColor, borderColor: categoryColor },
+          ]}
           onPress={handleCheckmarkPress}
         >
           {item.completed && <Text style={styles.checkmark}>✓</Text>}
@@ -46,20 +58,32 @@ const styles = StyleSheet.create({
   habitCard: {
     backgroundColor: '#1E1E1E',
     borderRadius: 12,
-    padding: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     marginBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
     borderColor: '#2A2A2A',
+    overflow: 'hidden',
+    position: 'relative',
   },
   habitCardCompleted: {
-    backgroundColor: '#18241B',
-    borderColor: '#2E4D34',
+    backgroundColor: '#161C18',
+    borderColor: '#233827',
+    opacity: 0.85,
+  },
+  accentStrip: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
   },
   habitInfo: {
     flex: 1,
+    paddingLeft: 6,
   },
   habitTitle: {
     color: '#FFF',
@@ -68,12 +92,15 @@ const styles = StyleSheet.create({
   },
   habitTitleCompleted: {
     textDecorationLine: 'line-through',
-    color: '#888',
+    color: '#777',
+  },
+  categoryBadge: {
+    marginTop: 4,
+    alignSelf: 'flex-start',
   },
   habitCategory: {
-    color: '#888',
     fontSize: 12,
-    marginTop: 4,
+    fontWeight: '600',
   },
   habitRight: {
     flexDirection: 'row',
@@ -99,10 +126,6 @@ const styles = StyleSheet.create({
     borderColor: '#555',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  checkboxCompleted: {
-    backgroundColor: '#4CAF50',
-    borderColor: '#4CAF50',
   },
   checkmark: {
     color: '#FFF',
