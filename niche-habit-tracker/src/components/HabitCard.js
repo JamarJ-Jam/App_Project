@@ -1,12 +1,22 @@
 import React from 'react';
 import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
+import * as Haptics from 'expo-haptics';
 
 export default function HabitCard({ item, onOpenEdit, onDelete, onToggle }) {
+  const handleCheckmarkPress = () => {
+    // Trigger medium physical haptic feedback on completion
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    onToggle(item.id);
+  };
+
   return (
     <TouchableOpacity
       style={[styles.habitCard, item.completed && styles.habitCardCompleted]}
       onPress={() => onOpenEdit(item)}
-      onLongPress={() => onDelete(item.id)}
+      onLongPress={() => {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        onDelete(item.id);
+      }}
       activeOpacity={0.7}
     >
       <View style={styles.habitInfo}>
@@ -23,7 +33,7 @@ export default function HabitCard({ item, onOpenEdit, onDelete, onToggle }) {
 
         <TouchableOpacity
           style={[styles.checkbox, item.completed && styles.checkboxCompleted]}
-          onPress={() => onToggle(item.id)}
+          onPress={handleCheckmarkPress}
         >
           {item.completed && <Text style={styles.checkmark}>✓</Text>}
         </TouchableOpacity>
