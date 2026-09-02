@@ -14,6 +14,7 @@ import {
 import { registerForPushNotificationsAsync, scheduleDailyReminder } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/utils/notifications.js';
 import { getHabits, saveHabits, toggleHabitCompletion, updateHabit } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/utils/storage.js';
 import HabitCard from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/components/HabitCard.js';
+import WeeklyCalendar from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/components/WeeklyCalendar';
 
 // TypeScript Interface for Habit
 export interface Habit {
@@ -129,6 +130,10 @@ export default function App() {
   // Find the highest active streak across all habits
   const maxStreak = habits.length > 0 ? Math.max(...habits.map((h) => h.streak || 0)) : 0;
 
+  const completedDates = Array.from(
+    new Set(habits.map((h) => h.lastCompletedDate).filter(Boolean))
+  ) as string[];
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#121212" />
@@ -161,6 +166,8 @@ export default function App() {
           <Text style={styles.statLabel}>Best Streak</Text>
         </View>
       </View>
+
+      <WeeklyCalendar completedDates={completedDates} />
 
       {/* Category Filter Bar */}
       <View style={styles.filterContainer}>
