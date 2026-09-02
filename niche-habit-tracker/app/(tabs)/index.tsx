@@ -11,6 +11,7 @@ import {
   StatusBar,
   Alert,
 } from 'react-native';
+import { registerForPushNotificationsAsync, scheduleDailyReminder } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/utils/notifications.js';
 import { getHabits, saveHabits, toggleHabitCompletion, updateHabit } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/utils/storage.js';
 import HabitCard from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/components/HabitCard.js';
 
@@ -31,6 +32,20 @@ export default function App() {
   const [editingHabitId, setEditingHabitId] = useState<string | null>(null);
   const [newHabitTitle, setNewHabitTitle] = useState<string>('');
   const [newHabitCategory, setNewHabitCategory] = useState<string>('');
+
+  useEffect(() => {
+    loadHabits();
+
+    // Initialize notification permissions and daily schedule
+    const setupNotifications = async () => {
+      const hasPermission = await registerForPushNotificationsAsync();
+      if (hasPermission) {
+        await scheduleDailyReminder(20, 0); // Scheduled for 8:00 PM daily
+      }
+    };
+
+    setupNotifications();
+  }, []);
 
   // Load habits on initial render
   useEffect(() => {
