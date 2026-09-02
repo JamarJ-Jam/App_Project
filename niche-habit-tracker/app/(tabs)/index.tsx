@@ -1,4 +1,3 @@
-import HabitCard from '../../src/components/HabitCard';
 import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
@@ -13,22 +12,25 @@ import {
   Alert,
 } from 'react-native';
 import { getHabits, saveHabits, toggleHabitCompletion, updateHabit } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/utils/storage.js';
+import HabitCard from '../../src/components/HabitCard';
+
+// TypeScript Interface for Habit
+export interface Habit {
+  id: string;
+  title: string;
+  category: string;
+  completed: boolean;
+  streak: number;
+  lastCompletedDate: string | null;
+}
 
 export default function App() {
-  const [habits, setHabits] = useState([]);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [newHabitTitle, setNewHabitTitle] = useState('');
-  const [newHabitCategory, setNewHabitCategory] = useState('');
-  const [editingHabitId, setEditingHabitId] = useState<string | null>(null);
+  const [habits, setHabits] = useState<Habit[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
-
-  // Extract unique categories from habits list
-  const categories = ['All', ...Array.from(new Set(habits.map((h) => h.category || 'General')))];
-
-  // Filter habits list based on selected category
-  const filteredHabits = selectedCategory === 'All'
-    ? habits
-    : habits.filter((h) => (h.category || 'General') === selectedCategory);
+  const [modalVisible, setModalVisible] = useState<boolean>(false);
+  const [editingHabitId, setEditingHabitId] = useState<string | null>(null);
+  const [newHabitTitle, setNewHabitTitle] = useState<string>('');
+  const [newHabitCategory, setNewHabitCategory] = useState<string>('');
 
   // Load habits on initial render
   useEffect(() => {
@@ -40,9 +42,23 @@ export default function App() {
     setHabits(loadedHabits);
   };
 
-  const handleToggleHabit = async (id) => {
+  // Dynamic Categories and Filtered List
+  const categories = ['All', ...Array.from(new Set(habits.map((h) => h.category || 'General')))];
+  const filteredHabits =
+    selectedCategory === 'All'
+      ? habits
+      : habits.filter((h) => (h.category || 'General') === selectedCategory);
+
+  const handleToggleHabit = async (id: string) => {
     const updated = await toggleHabitCompletion(id);
     setHabits(updated);
+  };
+
+  const handleOpenEditModal = (habit: Habit) => {
+    setEditingHabitId(habit.id);
+    setNewHabitTitle(habit.title);
+    setNewHabitCategory(habit.category);
+    setModalVisible(true);
   };
 
   const handleSaveHabit = async () => {
@@ -52,7 +68,6 @@ export default function App() {
     }
 
     if (editingHabitId) {
-      // Update existing habit
       const updated = await updateHabit({
         id: editingHabitId,
         title: newHabitTitle.trim(),
@@ -60,8 +75,7 @@ export default function App() {
       });
       setHabits(updated);
     } else {
-      // Create new habit
-      const newHabit = {
+      const newHabit: Habit = {
         id: Date.now().toString(),
         title: newHabitTitle.trim(),
         category: newHabitCategory.trim() || 'General',
@@ -74,21 +88,13 @@ export default function App() {
       setHabits(updatedHabits);
     }
 
-    // Reset form & modal state
     setNewHabitTitle('');
     setNewHabitCategory('');
     setEditingHabitId(null);
     setModalVisible(false);
   };
 
-  const handleOpenEditModal = (habit: any) => {
-    setEditingHabitId(habit.id);
-    setNewHabitTitle(habit.title);
-    setNewHabitCategory(habit.category);
-    setModalVisible(true);
-  };
-
-  const handleDeleteHabit = (id) => {
+  const handleDeleteHabit = (id: string) => {
     Alert.alert('Delete Habit', 'Are you sure you want to delete this habit?', [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -103,7 +109,6 @@ export default function App() {
     ]);
   };
 
-  // Calculate daily completion progress percentage
   const completedCount = habits.filter((h) => h.completed).length;
   const progressPercent = habits.length > 0 ? Math.round((completedCount / habits.length) * 100) : 0;
 
@@ -132,10 +137,7 @@ export default function App() {
           contentContainerStyle={styles.filterList}
           renderItem={({ item }) => (
             <TouchableOpacity
-              style={[
-                styles.filterChip,
-                selectedCategory === item && styles.filterChipActive,
-              ]}
+              style={[styles.filterChip, selectedCategory === item && styles.filterChipActive]}
               onPress={() => setSelectedCategory(item)}
             >
               <Text
@@ -158,8 +160,8 @@ export default function App() {
         contentContainerStyle={styles.listContainer}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No habits added yet.</Text>
-            <Text style={styles.emptySubtext}>Tap the button below to create your first habit!</Text>
+            <Text style={styles.emptyText}>No habits found.</Text>
+            <Text style={styles.emptySubtext}>Tap the button below to create one!</Text>
           </View>
         }
         renderItem={({ item }) => (
@@ -173,8 +175,8 @@ export default function App() {
       />
 
       {/* Add Habit FAB */}
-      <TouchableOpacity 
-        style={styles.fab} 
+      <TouchableOpacity
+        style={styles.fab}
         onPress={() => {
           setEditingHabitId(null);
           setNewHabitTitle('');
@@ -186,10 +188,14 @@ export default function App() {
       </TouchableOpacity>
 
       {/* Add / Edit Habit Modal */}
-      <Modal animationType="slide" transparent={true} visible={modalVisible} onRequestClose={() => setModalVisible(false)}>
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={modalVisible}
+        onRequestClose={() => setModalVisible(false)}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            {/* 3. Dynamic Modal Title */}
             <Text style={styles.modalTitle}>{editingHabitId ? 'Edit Habit' : 'New Habit'}</Text>
 
             <TextInput
@@ -221,9 +227,10 @@ export default function App() {
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
 
-              {/* 4. Save button calls handleSaveHabit */}
               <TouchableOpacity style={[styles.modalButton, styles.saveButton]} onPress={handleSaveHabit}>
-                <Text style={styles.saveButtonText}>{editingHabitId ? 'Save Changes' : 'Add Habit'}</Text>
+                <Text style={styles.saveButtonText}>
+                  {editingHabitId ? 'Save Changes' : 'Add Habit'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -265,6 +272,32 @@ const styles = StyleSheet.create({
     backgroundColor: '#4CAF50',
     borderRadius: 4,
   },
+  filterContainer: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#222',
+  },
+  filterList: {
+    paddingHorizontal: 16,
+  },
+  filterChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#2A2A2A',
+    marginRight: 8,
+  },
+  filterChipActive: {
+    backgroundColor: '#4CAF50',
+  },
+  filterChipText: {
+    color: '#AAA',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  filterChipTextActive: {
+    color: '#FFF',
+  },
   listContainer: {
     padding: 16,
   },
@@ -282,27 +315,6 @@ const styles = StyleSheet.create({
     color: '#777',
     fontSize: 14,
     marginTop: 6,
-  },
-  habitInfo: {
-    flex: 1,
-  },    
-  habitRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  streakText: {
-    color: '#FF9800',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  checkboxCompleted: {
-    backgroundColor: '#4CAF50',
-    borderColor: '#4CAF50',
-  },
-  checkmark: {
-    color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: 16,
   },
   fab: {
     position: 'absolute',
@@ -378,30 +390,4 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontWeight: 'bold',
   },
-  filterContainer: {
-  paddingVertical: 12,
-  borderBottomWidth: 1,
-  borderBottomColor: '#222',
-},
-filterList: {
-  paddingHorizontal: 16,
-},
-filterChip: {
-  paddingHorizontal: 16,
-  paddingVertical: 8,
-  borderRadius: 20,
-  backgroundColor: '#2A2A2A',
-  marginRight: 8,
-},
-filterChipActive: {
-  backgroundColor: '#4CAF50',
-},
-filterChipText: {
-  color: '#AAA',
-  fontSize: 14,
-  fontWeight: '600',
-},
-filterChipTextActive: {
-  color: '#FFF',
-}
 });
