@@ -12,7 +12,7 @@ import {
   Alert,
 } from 'react-native';
 import { getHabits, saveHabits, toggleHabitCompletion, updateHabit } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/utils/storage.js';
-import HabitCard from '../../src/components/HabitCard';
+import HabitCard from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/components/HabitCard.js';
 
 // TypeScript Interface for Habit
 export interface Habit {
@@ -111,6 +111,8 @@ export default function App() {
 
   const completedCount = habits.filter((h) => h.completed).length;
   const progressPercent = habits.length > 0 ? Math.round((completedCount / habits.length) * 100) : 0;
+  // Find the highest active streak across all habits
+  const maxStreak = habits.length > 0 ? Math.max(...habits.map((h) => h.streak || 0)) : 0;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -124,6 +126,24 @@ export default function App() {
         </Text>
         <View style={styles.progressBarBackground}>
           <View style={[styles.progressBarFill, { width: `${progressPercent}%` }]} />
+        </View>
+      </View>
+
+      {/* Quick Stats Overview */}
+      <View style={styles.statsRow}>
+        <View style={styles.statBox}>
+          <Text style={styles.statNumber}>{habits.length}</Text>
+          <Text style={styles.statLabel}>Total Habits</Text>
+        </View>
+        <View style={styles.statDivider} />
+        <View style={styles.statBox}>
+          <Text style={styles.statNumber}>{completedCount}</Text>
+          <Text style={styles.statLabel}>Done Today</Text>
+        </View>
+        <View style={styles.statDivider} />
+        <View style={styles.statBox}>
+          <Text style={[styles.statNumber, { color: '#FF9800' }]}>🔥 {maxStreak}</Text>
+          <Text style={styles.statLabel}>Best Streak</Text>
         </View>
       </View>
 
@@ -390,4 +410,38 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontWeight: 'bold',
   },
+  statsRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-around',
+  backgroundColor: '#1E1E1E',
+  marginHorizontal: 16,
+  marginTop: 16,
+  paddingVertical: 14,
+  borderRadius: 12,
+  borderWidth: 1,
+  borderColor: '#2A2A2A',
+  },
+  statBox: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  statNumber: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#FFF',
+  },
+  statLabel: {
+    fontSize: 11,
+    color: '#888',
+    marginTop: 2,
+    textTransform: 'uppercase',
+    fontWeight: '600',
+  },
+  statDivider: {
+    width: 1,
+    height: '60%',
+    backgroundColor: '#333',
+  },
+  
 });
