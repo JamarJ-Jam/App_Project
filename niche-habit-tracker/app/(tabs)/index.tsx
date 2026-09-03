@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { LineChart } from 'react-native-chart-kit';
 import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
+import { getDailyCalorieSummary } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/fitnessStorage';
 
 export default function HomeScreen() {
   const { theme, toggleTheme } = useTheme();
@@ -32,6 +33,13 @@ export default function HomeScreen() {
   const overallScore = Math.round(
     (efficiency.weeklyCompletionRate + (fitness.workoutsCompleted / 7) * 100) / 2
   );
+
+  const [caloriesBurned, setCaloriesBurned] = useState({ todayCalories: 0, weeklyCalories: 0 });
+
+    useEffect(() => {
+      getDailyCalorieSummary().then(setCaloriesBurned);
+    },  
+  []);
 
   const isMoreProductive = efficiency.wowGrowthPercent >= 0;
   const arrowSymbol = isMoreProductive ? '▲' : '▼';
@@ -80,15 +88,13 @@ export default function HomeScreen() {
 
         {/* Twin Pillar Cards Grid */}
         <View style={styles.pillarGrid}>
-          {/* Fitness Pillar */}
+          {/* Fitness Pillar Card */}
           <View style={[styles.pillarCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
             <Text style={[styles.pillarTitle, { color: theme.textSecondary }]}>🏋️ Fitness</Text>
             <Text style={[styles.pillarMainStat, { color: theme.textPrimary }]}>{fitness.workoutsCompleted}/7</Text>
-            <Text style={[styles.pillarSubtext, { color: theme.textSecondary }]}>
-              Sessions Finished
-            </Text>
-            <Text style={[styles.pillarSubtext, { color: theme.textSecondary, marginTop: 4 }]}>
-              BMI: {fitness.currentBmi}
+            <Text style={[styles.pillarSubtext, { color: theme.textSecondary }]}>Sessions Done</Text>
+            <Text style={[styles.pillarSubtext, { color: theme.fitnessAccent, fontWeight: 'bold', marginTop: 4 }]}>
+              🔥 {caloriesBurned.todayCalories} kcal Today
             </Text>
           </View>
 
