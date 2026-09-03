@@ -1,112 +1,139 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, View, ScrollView, SafeAreaView, TouchableOpacity, Dimensions } from 'react-native';
-import { LineChart } from 'react-native-chart-kit';
 import {
-  calculateBMI,
-  getBMICategory,
-  initialProfile,
-  initialFitness,
-  initialEfficiency,
-} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/analytics';
-
-const screenWidth = Dimensions.get('window').width - 32;
+  StyleSheet,
+  Text,
+  View,
+  ScrollView,
+  SafeAreaView,
+  TouchableOpacity,
+  Switch,
+  Dimensions,
+} from 'react-native';
+import { LineChart } from 'react-native-chart-kit';
+import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
 
 export default function HomeScreen() {
-  const [profile] = useState(initialProfile);
-  const [fitness] = useState(initialFitness);
-  const [efficiency] = useState(initialEfficiency);
+  const { theme, toggleTheme } = useTheme();
 
-  const bmi = calculateBMI(profile.weightKg, profile.heightCm);
-  const bmiCategory = getBMICategory(bmi);
-  const overallScore = Math.round((efficiency.weeklyCompletionRate + (fitness.workoutsCompleted / 7) * 100) / 2);
+  // Mock initial state for dashboard indicators
+  const [efficiency] = useState({
+    weeklyCompletionRate: 85,
+    tasksCompleted: 17,
+    totalTasks: 20,
+    wowGrowthPercent: 12, // Positive = ▲ Green, Negative = ▼ Red
+  });
+
+  const [fitness] = useState({
+    workoutsCompleted: 5,
+    projectedWeightLbs: 168,
+    currentBmi: 23.4,
+  });
+
+  const overallScore = Math.round(
+    (efficiency.weeklyCompletionRate + (fitness.workoutsCompleted / 7) * 100) / 2
+  );
+
+  const isMoreProductive = efficiency.wowGrowthPercent >= 0;
+  const arrowSymbol = isMoreProductive ? '▲' : '▼';
+  const arrowColor = isMoreProductive ? '#059669' : '#DC2626';
+
+  const screenWidth = Dimensions.get('window').width - 32;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Header & Overall Score */}
-        <View style={styles.header}>
-          <Text style={styles.headerSubtitle}>MY ACCOUNTABILITY</Text>
-          <Text style={styles.headerTitle}>Assistant Overview</Text>
+        {/* Header with Dark Mode Toggle Switch */}
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={[styles.headerSubtitle, { color: theme.fitnessAccent }]}>
+              MY ACCOUNTABILITY
+            </Text>
+            <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>
+              Assistant Overview
+            </Text>
+          </View>
+
+          <View style={styles.toggleContainer}>
+            <Text style={styles.toggleEmoji}>{theme.isDark ? '🌙' : '☀️'}</Text>
+            <Switch
+              value={theme.isDark}
+              onValueChange={toggleTheme}
+              trackColor={{ false: '#CBD5E1', true: '#334155' }}
+              thumbColor={theme.isDark ? '#3B82F6' : '#FFFFFF'}
+            />
+          </View>
         </View>
 
-        <View style={styles.scoreCard}>
+        {/* Overall Score Card */}
+        <View style={[styles.scoreCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
           <View style={styles.scoreHeader}>
-            <Text style={styles.scoreTitle}>Accountability Score</Text>
-            <Text style={styles.scoreBadge}>+{efficiency.wowGrowthPercent}% WOW</Text>
+            <Text style={[styles.scoreTitle, { color: theme.textSecondary }]}>Weekly Score</Text>
+            <Text style={[styles.scoreBadge, { color: theme.fitnessAccent, backgroundColor: theme.isDark ? '#064E3B' : '#ECFDF5' }]}>
+              EXCELLENT
+            </Text>
           </View>
-          <Text style={styles.scoreNumber}>{overallScore}%</Text>
+          <Text style={[styles.scoreNumber, { color: theme.textPrimary }]}>{overallScore}%</Text>
           <View style={styles.progressBarBackground}>
-            <View style={[styles.progressBarFill, { width: `${overallScore}%` }]} />
+            <View style={[styles.progressBarFill, { width: `${overallScore}%`, backgroundColor: theme.fitnessAccent }]} />
           </View>
-        </View>
-
-        {/* Smart Assistant Insight Banner */}
-        <View style={styles.insightCard}>
-          <Text style={styles.insightTag}>💡 Smart Assistant</Text>
-          <Text style={styles.insightText}>
-            You have an open 45-min gap today at 3:00 PM. Perfect time to log your 20-minute Squats & Push-ups routine!
-          </Text>
         </View>
 
         {/* Twin Pillar Cards Grid */}
         <View style={styles.pillarGrid}>
-          {/* Efficiency Pillar */}
-          <View style={styles.pillarCard}>
-            <Text style={styles.pillarTitle}>📊 Efficiency</Text>
-            <Text style={styles.pillarMainStat}>{efficiency.weeklyCompletionRate}%</Text>
-            <Text style={styles.pillarSubtext}>
-              {efficiency.tasksCompleted}/{efficiency.totalTasks} Tasks Done
+          {/* Fitness Pillar */}
+          <View style={[styles.pillarCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+            <Text style={[styles.pillarTitle, { color: theme.textSecondary }]}>🏋️ Fitness</Text>
+            <Text style={[styles.pillarMainStat, { color: theme.textPrimary }]}>{fitness.workoutsCompleted}/7</Text>
+            <Text style={[styles.pillarSubtext, { color: theme.textSecondary }]}>
+              Sessions Finished
             </Text>
-            <Text style={styles.trendText}>📈 +{efficiency.wowGrowthPercent}% WOW Growth</Text>
+            <Text style={[styles.pillarSubtext, { color: theme.textSecondary, marginTop: 4 }]}>
+              BMI: {fitness.currentBmi}
+            </Text>
           </View>
 
-          {/* Fitness Pillar */}
-          <View style={styles.pillarCard}>
-            <Text style={styles.pillarTitle}>🏋️ Fitness</Text>
-            <Text style={styles.pillarMainStat}>{fitness.workoutsCompleted} Days</Text>
-            <Text style={styles.pillarSubtext}>~{fitness.caloriesBurned} kcal burned</Text>
-            <Text style={styles.trendText}>BMI: {bmi} ({bmiCategory})</Text>
+          {/* Efficiency Pillar */}
+          <View style={[styles.pillarCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+            <Text style={[styles.pillarTitle, { color: theme.textSecondary }]}>📊 Efficiency</Text>
+            <Text style={[styles.pillarMainStat, { color: theme.textPrimary }]}>{efficiency.weeklyCompletionRate}%</Text>
+            <Text style={[styles.pillarSubtext, { color: theme.textSecondary }]}>
+              {efficiency.tasksCompleted}/{efficiency.totalTasks} Tasks Done
+            </Text>
+
+            {/* WOW Arrow Indicator */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+              <Text style={{ color: arrowColor, fontSize: 13, fontWeight: 'bold', marginRight: 4 }}>
+                {arrowSymbol} {Math.abs(efficiency.wowGrowthPercent)}%
+              </Text>
+              <Text style={{ color: theme.textSecondary, fontSize: 11 }}>vs last week</Text>
+            </View>
           </View>
         </View>
 
-        {/* WOW Efficiency Chart */}
-        <View style={styles.chartCard}>
-          <Text style={styles.chartTitle}>Weekly Efficiency Trend (WOW)</Text>
+        {/* WOW Chart Card */}
+        <View style={[styles.chartCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+          <Text style={[styles.chartTitle, { color: theme.textSecondary }]}>WEEK-OVER-WEEK PERFORMANCE</Text>
           <LineChart
             data={{
               labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-              datasets: [{ data: [65, 70, 80, 75, 85, 90, 82] }],
+              datasets: [{ data: [65, 70, 80, 75, 90, 85, 92] }],
             }}
             width={screenWidth - 32}
             height={180}
-            yAxisSuffix="%"
             chartConfig={{
-              backgroundColor: '#1E1E1E',
-              backgroundGradientFrom: '#1E1E1E',
-              backgroundGradientTo: '#1E1E1E',
+              backgroundColor: theme.cardBackground,
+              backgroundGradientFrom: theme.cardBackground,
+              backgroundGradientTo: theme.cardBackground,
               decimalPlaces: 0,
-              color: (opacity = 1) => `rgba(76, 175, 80, ${opacity})`,
-              labelColor: (opacity = 1) => `rgba(170, 170, 170, ${opacity})`,
-              style: { borderRadius: 12 },
-              propsForDots: { r: '4', strokeWidth: '2', stroke: '#4CAF50' },
+              color: (opacity = 1) =>
+                theme.isDark ? `rgba(59, 130, 246, ${opacity})` : `rgba(37, 99, 235, ${opacity})`,
+              labelColor: (opacity = 1) =>
+                theme.isDark ? `rgba(170, 170, 170, ${opacity})` : `rgba(100, 116, 139, ${opacity})`,
+              propsForDots: { r: '4', strokeWidth: '2', stroke: theme.primaryAccent },
             }}
             bezier
-            style={{ marginVertical: 8, borderRadius: 12 }}
+            style={{ borderRadius: 8, marginTop: 8 }}
           />
-        </View>
-
-        {/* Quick Actions */}
-        <Text style={styles.sectionTitle}>Quick Actions</Text>
-        <View style={styles.actionRow}>
-          <TouchableOpacity style={styles.actionButton}>
-            <Text style={styles.actionText}>+ Workout</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionButton}>
-            <Text style={styles.actionText}>+ Task</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionButton}>
-            <Text style={styles.actionText}>⚖️ Weight</Text>
-          </TouchableOpacity>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -114,31 +141,25 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#121212' },
+  container: { flex: 1 },
   scrollContent: { padding: 16 },
-  header: { marginBottom: 16 },
-  headerSubtitle: { color: '#4CAF50', fontSize: 12, fontWeight: 'bold', letterSpacing: 1 },
-  headerTitle: { color: '#FFF', fontSize: 24, fontWeight: 'bold' },
-  scoreCard: { backgroundColor: '#1E1E1E', padding: 16, borderRadius: 12, marginBottom: 16, borderWidth: 1, borderColor: '#2A2A2A' },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  headerSubtitle: { fontSize: 12, fontWeight: 'bold', letterSpacing: 1 },
+  headerTitle: { fontSize: 24, fontWeight: 'bold' },
+  toggleContainer: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  toggleEmoji: { fontSize: 16 },
+  scoreCard: { padding: 16, borderRadius: 12, marginBottom: 16, borderWidth: 1 },
   scoreHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  scoreTitle: { color: '#AAA', fontSize: 14 },
-  scoreBadge: { color: '#4CAF50', backgroundColor: '#1E2E20', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, fontSize: 12, fontWeight: 'bold' },
-  scoreNumber: { color: '#FFF', fontSize: 36, fontWeight: 'bold', marginVertical: 8 },
-  progressBarBackground: { height: 8, backgroundColor: '#2A2A2A', borderRadius: 4, overflow: 'hidden' },
-  progressBarFill: { height: '100%', backgroundColor: '#4CAF50' },
-  insightCard: { backgroundColor: '#1E2638', padding: 14, borderRadius: 12, marginBottom: 16, borderWidth: 1, borderColor: '#2196F3' },
-  insightTag: { color: '#2196F3', fontSize: 12, fontWeight: 'bold', marginBottom: 4 },
-  insightText: { color: '#DDD', fontSize: 13, lineHeight: 18 },
+  scoreTitle: { fontSize: 14, fontWeight: '600' },
+  scoreBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, fontSize: 12, fontWeight: 'bold' },
+  scoreNumber: { fontSize: 36, fontWeight: 'bold', marginVertical: 8 },
+  progressBarBackground: { height: 8, backgroundColor: '#E2E8F0', borderRadius: 4, overflow: 'hidden' },
+  progressBarFill: { height: '100%', borderRadius: 4 },
   pillarGrid: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
-  pillarCard: { flex: 0.48, backgroundColor: '#1E1E1E', padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#2A2A2A' },
-  pillarTitle: { color: '#AAA', fontSize: 12, fontWeight: 'bold' },
-  pillarMainStat: { color: '#FFF', fontSize: 22, fontWeight: 'bold', marginVertical: 6 },
-  pillarSubtext: { color: '#888', fontSize: 12 },
-  trendText: { color: '#4CAF50', fontSize: 11, fontWeight: '600', marginTop: 8 },
-  chartCard: { backgroundColor: '#1E1E1E', padding: 16, borderRadius: 12, marginBottom: 16, borderWidth: 1, borderColor: '#2A2A2A' },
-  chartTitle: { color: '#AAA', fontSize: 12, fontWeight: 'bold', marginBottom: 8 },
-  sectionTitle: { color: '#FFF', fontSize: 16, fontWeight: 'bold', marginBottom: 12 },
-  actionRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  actionButton: { flex: 0.31, backgroundColor: '#2A2A2A', paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
-  actionText: { color: '#FFF', fontWeight: '600', fontSize: 13 },
+  pillarCard: { flex: 0.48, padding: 14, borderRadius: 12, borderWidth: 1 },
+  pillarTitle: { fontSize: 12, fontWeight: 'bold' },
+  pillarMainStat: { fontSize: 22, fontWeight: 'bold', marginVertical: 6 },
+  pillarSubtext: { fontSize: 12 },
+  chartCard: { padding: 16, borderRadius: 12, marginBottom: 16, borderWidth: 1 },
+  chartTitle: { fontSize: 12, fontWeight: 'bold', marginBottom: 4 },
 });
