@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "niche-habit-tracker",
-    "slug": "niche-habit-tracker",
+    "slug": "my-chawgee",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -43,6 +43,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "04b50a30-e4fc-4efc-911c-cf91890c6255"
+      }
+    },
+    "owner": "jamar-js-team"
   }
 }

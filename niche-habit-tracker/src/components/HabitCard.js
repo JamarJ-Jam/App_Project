@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { getCategoryColor } from '../utils/colors';
+import { getCategoryColor } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/utils/colors.js';
 
 export default function HabitCard({ item, onOpenEdit, onDelete, onToggle }) {
   const categoryColor = getCategoryColor(item.category);
