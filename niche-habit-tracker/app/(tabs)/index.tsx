@@ -7,7 +7,7 @@ import {
   initialProfile,
   initialFitness,
   initialEfficiency,
-} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/analytics.ts';
+} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/analytics';
 
 const screenWidth = Dimensions.get('window').width - 32;
 

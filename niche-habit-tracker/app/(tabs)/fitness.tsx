@@ -20,7 +20,7 @@ import {
   saveWorkouts,
   getBiometrics,
   saveBiometrics,
-} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/fitnessStorage.ts';
+} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/fitnessStorage';
 
 export default function FitnessScreen() {
   const [workouts, setWorkouts] = useState<WorkoutLog[]>([]);
