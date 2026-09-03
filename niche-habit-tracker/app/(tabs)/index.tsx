@@ -1,472 +1,144 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { StyleSheet, Text, View, ScrollView, SafeAreaView, TouchableOpacity, Dimensions } from 'react-native';
+import { LineChart } from 'react-native-chart-kit';
 import {
-  StyleSheet,
-  Text,
-  View,
-  FlatList,
-  TouchableOpacity,
-  Modal,
-  TextInput,
-  SafeAreaView,
-  StatusBar,
-  Alert,
-} from 'react-native';
-import { registerForPushNotificationsAsync, scheduleDailyReminder } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/utils/notifications.js';
-import { getHabits, saveHabits, toggleHabitCompletion, updateHabit } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/utils/storage.js';
-import HabitCard from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/components/HabitCard.js';
-import WeeklyCalendar from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/components/WeeklyCalendar';
+  calculateBMI,
+  getBMICategory,
+  initialProfile,
+  initialFitness,
+  initialEfficiency,
+} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/analytics.ts';
 
-// TypeScript Interface for Habit
-export interface Habit {
-  id: string;
-  title: string;
-  category: string;
-  completed: boolean;
-  streak: number;
-  lastCompletedDate: string | null;
-}
+const screenWidth = Dimensions.get('window').width - 32;
 
-export default function App() {
-  const [habits, setHabits] = useState<Habit[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string>('All');
-  const [modalVisible, setModalVisible] = useState<boolean>(false);
-  const [editingHabitId, setEditingHabitId] = useState<string | null>(null);
-  const [newHabitTitle, setNewHabitTitle] = useState<string>('');
-  const [newHabitCategory, setNewHabitCategory] = useState<string>('');
+export default function HomeScreen() {
+  const [profile] = useState(initialProfile);
+  const [fitness] = useState(initialFitness);
+  const [efficiency] = useState(initialEfficiency);
 
-  useEffect(() => {
-    loadHabits();
-
-    // Initialize notification permissions and daily schedule
-    const setupNotifications = async () => {
-      const hasPermission = await registerForPushNotificationsAsync();
-      if (hasPermission) {
-        await scheduleDailyReminder(20, 0); // Scheduled for 8:00 PM daily
-      }
-    };
-
-    setupNotifications();
-  }, []);
-
-  // Load habits on initial render
-  useEffect(() => {
-    loadHabits();
-  }, []);
-
-  const loadHabits = async () => {
-    const loadedHabits = await getHabits();
-    setHabits(loadedHabits);
-  };
-
-  // Dynamic Categories and Filtered List
-  const categories = ['All', ...Array.from(new Set(habits.map((h) => h.category || 'General')))];
-  const filteredHabits =
-    selectedCategory === 'All'
-      ? habits
-      : habits.filter((h) => (h.category || 'General') === selectedCategory);
-
-  const handleToggleHabit = async (id: string) => {
-    const updated = await toggleHabitCompletion(id);
-    setHabits(updated);
-  };
-
-  const handleOpenEditModal = (habit: Habit) => {
-    setEditingHabitId(habit.id);
-    setNewHabitTitle(habit.title);
-    setNewHabitCategory(habit.category);
-    setModalVisible(true);
-  };
-
-  const handleSaveHabit = async () => {
-    if (!newHabitTitle.trim()) {
-      Alert.alert('Validation Error', 'Please enter a habit title.');
-      return;
-    }
-
-    if (editingHabitId) {
-      const updated = await updateHabit({
-        id: editingHabitId,
-        title: newHabitTitle.trim(),
-        category: newHabitCategory.trim() || 'General',
-      });
-      setHabits(updated);
-    } else {
-      const newHabit: Habit = {
-        id: Date.now().toString(),
-        title: newHabitTitle.trim(),
-        category: newHabitCategory.trim() || 'General',
-        completed: false,
-        streak: 0,
-        lastCompletedDate: null,
-      };
-      const updatedHabits = [...habits, newHabit];
-      await saveHabits(updatedHabits);
-      setHabits(updatedHabits);
-    }
-
-    setNewHabitTitle('');
-    setNewHabitCategory('');
-    setEditingHabitId(null);
-    setModalVisible(false);
-  };
-
-  const handleDeleteHabit = (id: string) => {
-    Alert.alert('Delete Habit', 'Are you sure you want to delete this habit?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          const updated = habits.filter((h) => h.id !== id);
-          await saveHabits(updated);
-          setHabits(updated);
-        },
-      },
-    ]);
-  };
-
-  const completedCount = habits.filter((h) => h.completed).length;
-  const progressPercent = habits.length > 0 ? Math.round((completedCount / habits.length) * 100) : 0;
-  // Find the highest active streak across all habits
-  const maxStreak = habits.length > 0 ? Math.max(...habits.map((h) => h.streak || 0)) : 0;
-
-  const completedDates = Array.from(
-    new Set(habits.map((h) => h.lastCompletedDate).filter(Boolean))
-  ) as string[];
+  const bmi = calculateBMI(profile.weightKg, profile.heightCm);
+  const bmiCategory = getBMICategory(bmi);
+  const overallScore = Math.round((efficiency.weeklyCompletionRate + (fitness.workoutsCompleted / 7) * 100) / 2);
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#121212" />
-
-      {/* Header & Progress Stats */}
-      <View style={styles.headerContainer}>
-        <Text style={styles.headerTitle}>Daily Habit Tracker</Text>
-        <Text style={styles.progressText}>
-          {completedCount} of {habits.length} habits completed ({progressPercent}%)
-        </Text>
-        <View style={styles.progressBarBackground}>
-          <View style={[styles.progressBarFill, { width: `${progressPercent}%` }]} />
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* Header & Overall Score */}
+        <View style={styles.header}>
+          <Text style={styles.headerSubtitle}>MY ACCOUNTABILITY</Text>
+          <Text style={styles.headerTitle}>Assistant Overview</Text>
         </View>
-      </View>
 
-      {/* Quick Stats Overview */}
-      <View style={styles.statsRow}>
-        <View style={styles.statBox}>
-          <Text style={styles.statNumber}>{habits.length}</Text>
-          <Text style={styles.statLabel}>Total Habits</Text>
+        <View style={styles.scoreCard}>
+          <View style={styles.scoreHeader}>
+            <Text style={styles.scoreTitle}>Accountability Score</Text>
+            <Text style={styles.scoreBadge}>+{efficiency.wowGrowthPercent}% WOW</Text>
+          </View>
+          <Text style={styles.scoreNumber}>{overallScore}%</Text>
+          <View style={styles.progressBarBackground}>
+            <View style={[styles.progressBarFill, { width: `${overallScore}%` }]} />
+          </View>
         </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statBox}>
-          <Text style={styles.statNumber}>{completedCount}</Text>
-          <Text style={styles.statLabel}>Done Today</Text>
+
+        {/* Smart Assistant Insight Banner */}
+        <View style={styles.insightCard}>
+          <Text style={styles.insightTag}>💡 Smart Assistant</Text>
+          <Text style={styles.insightText}>
+            You have an open 45-min gap today at 3:00 PM. Perfect time to log your 20-minute Squats & Push-ups routine!
+          </Text>
         </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statBox}>
-          <Text style={[styles.statNumber, { color: '#FF9800' }]}>🔥 {maxStreak}</Text>
-          <Text style={styles.statLabel}>Best Streak</Text>
-        </View>
-      </View>
 
-      <WeeklyCalendar completedDates={completedDates} />
-
-      {/* Category Filter Bar */}
-      <View style={styles.filterContainer}>
-        <FlatList
-          horizontal
-          data={categories}
-          keyExtractor={(item) => item}
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterList}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={[styles.filterChip, selectedCategory === item && styles.filterChipActive]}
-              onPress={() => setSelectedCategory(item)}
-            >
-              <Text
-                style={[
-                  styles.filterChipText,
-                  selectedCategory === item && styles.filterChipTextActive,
-                ]}
-              >
-                {item}
-              </Text>
-            </TouchableOpacity>
-          )}
-        />
-      </View>
-
-      {/* Habit List */}
-      <FlatList
-        data={filteredHabits}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContainer}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Text style={{ fontSize: 48, marginBottom: 12 }}>🎯</Text>
-            <Text style={styles.emptyText}>
-              {selectedCategory === 'All' ? 'No habits added yet' : `No habits under "${selectedCategory}"`}
+        {/* Twin Pillar Cards Grid */}
+        <View style={styles.pillarGrid}>
+          {/* Efficiency Pillar */}
+          <View style={styles.pillarCard}>
+            <Text style={styles.pillarTitle}>📊 Efficiency</Text>
+            <Text style={styles.pillarMainStat}>{efficiency.weeklyCompletionRate}%</Text>
+            <Text style={styles.pillarSubtext}>
+              {efficiency.tasksCompleted}/{efficiency.totalTasks} Tasks Done
             </Text>
-            <Text style={styles.emptySubtext}>Tap the + button below to get started!</Text>
+            <Text style={styles.trendText}>📈 +{efficiency.wowGrowthPercent}% WOW Growth</Text>
           </View>
-        }
-        renderItem={({ item }) => (
-          <HabitCard
-            item={item}
-            onOpenEdit={handleOpenEditModal}
-            onDelete={handleDeleteHabit}
-            onToggle={handleToggleHabit}
-          />
-        )}
-      />
 
-      {/* Add Habit FAB */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => {
-          setEditingHabitId(null);
-          setNewHabitTitle('');
-          setNewHabitCategory('');
-          setModalVisible(true);
-        }}
-      >
-        <Text style={styles.fabText}>+</Text>
-      </TouchableOpacity>
-
-      {/* Add / Edit Habit Modal */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>{editingHabitId ? 'Edit Habit' : 'New Habit'}</Text>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Habit Title (e.g., Read 20 pages)"
-              placeholderTextColor="#888"
-              value={newHabitTitle}
-              onChangeText={setNewHabitTitle}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Category (e.g., Fitness, Learning)"
-              placeholderTextColor="#888"
-              value={newHabitCategory}
-              onChangeText={setNewHabitCategory}
-            />
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.cancelButton]}
-                onPress={() => {
-                  setEditingHabitId(null);
-                  setNewHabitTitle('');
-                  setNewHabitCategory('');
-                  setModalVisible(false);
-                }}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={[styles.modalButton, styles.saveButton]} onPress={handleSaveHabit}>
-                <Text style={styles.saveButtonText}>
-                  {editingHabitId ? 'Save Changes' : 'Add Habit'}
-                </Text>
-              </TouchableOpacity>
-            </View>
+          {/* Fitness Pillar */}
+          <View style={styles.pillarCard}>
+            <Text style={styles.pillarTitle}>🏋️ Fitness</Text>
+            <Text style={styles.pillarMainStat}>{fitness.workoutsCompleted} Days</Text>
+            <Text style={styles.pillarSubtext}>~{fitness.caloriesBurned} kcal burned</Text>
+            <Text style={styles.trendText}>BMI: {bmi} ({bmiCategory})</Text>
           </View>
         </View>
-      </Modal>
+
+        {/* WOW Efficiency Chart */}
+        <View style={styles.chartCard}>
+          <Text style={styles.chartTitle}>Weekly Efficiency Trend (WOW)</Text>
+          <LineChart
+            data={{
+              labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+              datasets: [{ data: [65, 70, 80, 75, 85, 90, 82] }],
+            }}
+            width={screenWidth - 32}
+            height={180}
+            yAxisSuffix="%"
+            chartConfig={{
+              backgroundColor: '#1E1E1E',
+              backgroundGradientFrom: '#1E1E1E',
+              backgroundGradientTo: '#1E1E1E',
+              decimalPlaces: 0,
+              color: (opacity = 1) => `rgba(76, 175, 80, ${opacity})`,
+              labelColor: (opacity = 1) => `rgba(170, 170, 170, ${opacity})`,
+              style: { borderRadius: 12 },
+              propsForDots: { r: '4', strokeWidth: '2', stroke: '#4CAF50' },
+            }}
+            bezier
+            style={{ marginVertical: 8, borderRadius: 12 }}
+          />
+        </View>
+
+        {/* Quick Actions */}
+        <Text style={styles.sectionTitle}>Quick Actions</Text>
+        <View style={styles.actionRow}>
+          <TouchableOpacity style={styles.actionButton}>
+            <Text style={styles.actionText}>+ Workout</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionButton}>
+            <Text style={styles.actionText}>+ Task</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionButton}>
+            <Text style={styles.actionText}>⚖️ Weight</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#121212',
-  },
-  headerContainer: {
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#222',
-  },
-  headerTitle: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    color: '#FFF',
-    marginBottom: 8,
-  },
-  progressText: {
-    fontSize: 14,
-    color: '#AAA',
-    marginBottom: 10,
-  },
-  progressBarBackground: {
-    height: 8,
-    backgroundColor: '#333',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: '#4CAF50',
-    borderRadius: 4,
-  },
-  filterContainer: {
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#222',
-  },
-  filterList: {
-    paddingHorizontal: 16,
-  },
-  filterChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#2A2A2A',
-    marginRight: 8,
-  },
-  filterChipActive: {
-    backgroundColor: '#4CAF50',
-  },
-  filterChipText: {
-    color: '#AAA',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  filterChipTextActive: {
-    color: '#FFF',
-  },
-  listContainer: {
-    padding: 16,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-  },
-  emptyText: {
-    color: '#FFF',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  emptySubtext: {
-    color: '#777',
-    fontSize: 14,
-    marginTop: 6,
-  },
-  fab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 30,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#4CAF50',
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 3,
-  },
-  fabText: {
-    color: '#FFF',
-    fontSize: 32,
-    lineHeight: 34,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    width: '100%',
-    backgroundColor: '#1E1E1E',
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#FFF',
-    marginBottom: 16,
-  },
-  input: {
-    backgroundColor: '#2A2A2A',
-    color: '#FFF',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
-    fontSize: 15,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: 8,
-  },
-  modalButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    marginLeft: 10,
-  },
-  cancelButton: {
-    backgroundColor: '#333',
-  },
-  cancelButtonText: {
-    color: '#AAA',
-  },
-  saveButton: {
-    backgroundColor: '#4CAF50',
-  },
-  saveButtonText: {
-    color: '#FFF',
-    fontWeight: 'bold',
-  },
-  statsRow: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  justifyContent: 'space-around',
-  backgroundColor: '#1E1E1E',
-  marginHorizontal: 16,
-  marginTop: 16,
-  paddingVertical: 14,
-  borderRadius: 12,
-  borderWidth: 1,
-  borderColor: '#2A2A2A',
-  },
-  statBox: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  statNumber: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#FFF',
-  },
-  statLabel: {
-    fontSize: 11,
-    color: '#888',
-    marginTop: 2,
-    textTransform: 'uppercase',
-    fontWeight: '600',
-  },
-  statDivider: {
-    width: 1,
-    height: '60%',
-    backgroundColor: '#333',
-  },
-  
+  container: { flex: 1, backgroundColor: '#121212' },
+  scrollContent: { padding: 16 },
+  header: { marginBottom: 16 },
+  headerSubtitle: { color: '#4CAF50', fontSize: 12, fontWeight: 'bold', letterSpacing: 1 },
+  headerTitle: { color: '#FFF', fontSize: 24, fontWeight: 'bold' },
+  scoreCard: { backgroundColor: '#1E1E1E', padding: 16, borderRadius: 12, marginBottom: 16, borderWidth: 1, borderColor: '#2A2A2A' },
+  scoreHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  scoreTitle: { color: '#AAA', fontSize: 14 },
+  scoreBadge: { color: '#4CAF50', backgroundColor: '#1E2E20', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, fontSize: 12, fontWeight: 'bold' },
+  scoreNumber: { color: '#FFF', fontSize: 36, fontWeight: 'bold', marginVertical: 8 },
+  progressBarBackground: { height: 8, backgroundColor: '#2A2A2A', borderRadius: 4, overflow: 'hidden' },
+  progressBarFill: { height: '100%', backgroundColor: '#4CAF50' },
+  insightCard: { backgroundColor: '#1E2638', padding: 14, borderRadius: 12, marginBottom: 16, borderWidth: 1, borderColor: '#2196F3' },
+  insightTag: { color: '#2196F3', fontSize: 12, fontWeight: 'bold', marginBottom: 4 },
+  insightText: { color: '#DDD', fontSize: 13, lineHeight: 18 },
+  pillarGrid: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
+  pillarCard: { flex: 0.48, backgroundColor: '#1E1E1E', padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#2A2A2A' },
+  pillarTitle: { color: '#AAA', fontSize: 12, fontWeight: 'bold' },
+  pillarMainStat: { color: '#FFF', fontSize: 22, fontWeight: 'bold', marginVertical: 6 },
+  pillarSubtext: { color: '#888', fontSize: 12 },
+  trendText: { color: '#4CAF50', fontSize: 11, fontWeight: '600', marginTop: 8 },
+  chartCard: { backgroundColor: '#1E1E1E', padding: 16, borderRadius: 12, marginBottom: 16, borderWidth: 1, borderColor: '#2A2A2A' },
+  chartTitle: { color: '#AAA', fontSize: 12, fontWeight: 'bold', marginBottom: 8 },
+  sectionTitle: { color: '#FFF', fontSize: 16, fontWeight: 'bold', marginBottom: 12 },
+  actionRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  actionButton: { flex: 0.31, backgroundColor: '#2A2A2A', paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
+  actionText: { color: '#FFF', fontWeight: '600', fontSize: 13 },
 });
