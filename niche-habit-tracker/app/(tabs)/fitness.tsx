@@ -28,12 +28,13 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 export default function FitnessScreen() {
   const { theme } = useTheme();
 
+  // Day Selection & Routine State
   const [selectedDay, setSelectedDay] = useState<string>('Mon');
   const [routines, setRoutines] = useState<DayRoutine>({
     Mon: [], Tue: [], Wed: [], Thu: [], Fri: [], Sat: [], Sun: [],
   });
 
-  // Biometrics State
+  // Biometrics State & Unit Preference
   const [unit, setUnit] = useState<'lbs' | 'kg'>('lbs');
   const [weightInput, setWeightInput] = useState('168');
   const [heightCm, setHeightCm] = useState('175');
@@ -80,6 +81,62 @@ export default function FitnessScreen() {
     await AsyncStorage.setItem(STORAGE_KEY_ROUTINES, JSON.stringify(updated));
   };
 
+  const saveBiometricsToStorage = async () => {
+    const data = { unit, weightInput, heightCm, targetWeightInput };
+    await AsyncStorage.setItem(STORAGE_KEY_BIOMETRICS, JSON.stringify(data));
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setIsBiometricsExpanded(false);
+  };
+
+  // --- Dynamic BMI & Weight Calculations ---
+  const rawWeight = parseFloat(weightInput) || 0;
+  const rawTargetWeight = parseFloat(targetWeightInput) || 0;
+  const rawHeightCm = parseFloat(heightCm) || 0;
+
+  const weightInKg = unit === 'lbs' ? rawWeight * 0.453592 : rawWeight;
+  const targetWeightInKg = unit === 'lbs' ? rawTargetWeight * 0.453592 : rawTargetWeight;
+  const heightM = rawHeightCm / 100;
+
+  const currentBmi =
+    weightInKg > 0 && heightM > 0 ? (weightInKg / (heightM * heightM)).toFixed(1) : '0.0';
+
+  const projectedBmi =
+    targetWeightInKg > 0 && heightM > 0
+      ? (targetWeightInKg / (heightM * heightM)).toFixed(1)
+      : '0.0';
+
+  const weightChangeNeeded =
+    rawWeight > 0 && rawTargetWeight > 0 ? (rawWeight - rawTargetWeight).toFixed(1) : '0.0';
+
+  const getBmiCategory = (bmiValue: number) => {
+    if (bmiValue <= 0) return 'Invalid';
+    if (bmiValue < 18.5) return 'Underweight';
+    if (bmiValue < 25) return 'Normal';
+    if (bmiValue < 30) return 'Overweight';
+    return 'Obese';
+  };
+
+  const handleToggleUnit = (newUnit: 'lbs' | 'kg') => {
+    if (newUnit === unit) return;
+    Haptics.selectionAsync();
+
+    if (rawWeight > 0) {
+      const convertedWeight =
+        newUnit === 'kg' ? (rawWeight * 0.453592).toFixed(1) : (rawWeight / 0.453592).toFixed(1);
+      setWeightInput(convertedWeight);
+    }
+
+    if (rawTargetWeight > 0) {
+      const convertedTarget =
+        newUnit === 'kg'
+          ? (rawTargetWeight * 0.453592).toFixed(1)
+          : (rawTargetWeight / 0.453592).toFixed(1);
+      setTargetWeightInput(convertedTarget);
+    }
+
+    setUnit(newUnit);
+  };
+
   // Set Handlers
   const handleAddSet = () => {
     const lastSet = sets[sets.length - 1];
@@ -108,9 +165,6 @@ export default function FitnessScreen() {
       Alert.alert('Missing Name', 'Please enter an exercise name.');
       return;
     }
-
-    const rawWeight = parseFloat(weightInput) || 76;
-    const weightInKg = unit === 'lbs' ? rawWeight * 0.453592 : rawWeight;
 
     const newEx: DetailedExercise = {
       id: Date.now().toString(),
@@ -163,7 +217,127 @@ export default function FitnessScreen() {
         {/* Header */}
         <View style={styles.header}>
           <Text style={[styles.headerSubtitle, { color: theme.fitnessAccent }]}>FITNESS TRACKER</Text>
-          <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>Detailed Set Routine Planner</Text>
+          <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>Workout Planner & Biometrics</Text>
+        </View>
+
+        {/* Collapsible Biometrics Section */}
+        <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+          <TouchableOpacity
+            style={styles.collapsibleHeader}
+            onPress={() => {
+              Haptics.selectionAsync();
+              setIsBiometricsExpanded(!isBiometricsExpanded);
+            }}
+            activeOpacity={0.7}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.cardTitle, { color: theme.textSecondary, marginBottom: 2 }]}>
+                BIOMETRICS SUMMARY
+              </Text>
+              {!isBiometricsExpanded && (
+                <Text style={[styles.summaryText, { color: theme.textPrimary }]}>
+                  Current: <Text style={{ fontWeight: 'bold' }}>{weightInput} {unit}</Text> (BMI: <Text style={{ color: theme.fitnessAccent, fontWeight: 'bold' }}>{currentBmi}</Text>) • Goal BMI: <Text style={{ color: theme.primaryAccent, fontWeight: 'bold' }}>{projectedBmi}</Text>
+                </Text>
+              )}
+            </View>
+            <Text style={{ color: theme.textSecondary, fontSize: 13, fontWeight: 'bold', marginLeft: 8 }}>
+              {isBiometricsExpanded ? '▲ Minimize' : '▼ Expand'}
+            </Text>
+          </TouchableOpacity>
+
+          {isBiometricsExpanded && (
+            <View style={{ marginTop: 14 }}>
+              
+              {/* Unit Switcher */}
+              <View style={styles.unitRow}>
+                <Text style={[styles.inputLabel, { color: theme.textSecondary, marginBottom: 0 }]}>Weight Unit:</Text>
+                <View style={styles.unitToggleGroup}>
+                  <TouchableOpacity
+                    style={[
+                      styles.unitBtn,
+                      { backgroundColor: unit === 'lbs' ? theme.fitnessAccent : theme.isDark ? '#2A2A2A' : '#E2E8F0' },
+                    ]}
+                    onPress={() => handleToggleUnit('lbs')}
+                  >
+                    <Text style={[styles.unitBtnText, { color: unit === 'lbs' ? '#FFF' : theme.textPrimary }]}>lbs</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.unitBtn,
+                      { backgroundColor: unit === 'kg' ? theme.fitnessAccent : theme.isDark ? '#2A2A2A' : '#E2E8F0' },
+                    ]}
+                    onPress={() => handleToggleUnit('kg')}
+                  >
+                    <Text style={[styles.unitBtnText, { color: unit === 'kg' ? '#FFF' : theme.textPrimary }]}>kg</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Inputs */}
+              <View style={styles.inputGrid}>
+                <View style={styles.inputBox}>
+                  <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>Current Weight ({unit})</Text>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
+                    keyboardType="numeric"
+                    value={weightInput}
+                    onChangeText={setWeightInput}
+                  />
+                </View>
+
+                <View style={styles.inputBox}>
+                  <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>Height (cm)</Text>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
+                    keyboardType="numeric"
+                    value={heightCm}
+                    onChangeText={setHeightCm}
+                  />
+                </View>
+
+                <View style={[styles.inputBox, { width: '100%', marginTop: 8 }]}>
+                  <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>Goal Weight ({unit})</Text>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
+                    keyboardType="numeric"
+                    value={targetWeightInput}
+                    onChangeText={setTargetWeightInput}
+                  />
+                </View>
+              </View>
+
+              {/* Live vs Projected BMI Comparison */}
+              <View style={[styles.resultsBox, { backgroundColor: theme.isDark ? '#1A1A1A' : '#F8FAFC', borderColor: theme.border }]}>
+                <View style={styles.resultRow}>
+                  <Text style={[styles.resultLabel, { color: theme.textSecondary }]}>Current BMI:</Text>
+                  <Text style={[styles.resultValue, { color: theme.fitnessAccent }]}>
+                    {currentBmi} ({getBmiCategory(parseFloat(currentBmi))})
+                  </Text>
+                </View>
+
+                <View style={[styles.resultRow, { marginTop: 8 }]}>
+                  <Text style={[styles.resultLabel, { color: theme.textSecondary }]}>Projected Goal BMI:</Text>
+                  <Text style={[styles.resultValue, { color: theme.primaryAccent }]}>
+                    {projectedBmi} ({getBmiCategory(parseFloat(projectedBmi))})
+                  </Text>
+                </View>
+
+                <View style={[styles.resultRow, { marginTop: 8 }]}>
+                  <Text style={[styles.resultLabel, { color: theme.textSecondary }]}>Target Reduction:</Text>
+                  <Text style={[styles.resultValue, { color: theme.textPrimary }]}>
+                    {weightChangeNeeded} {unit}
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.saveBioBtn, { backgroundColor: theme.fitnessAccent }]}
+                onPress={saveBiometricsToStorage}
+              >
+                <Text style={styles.saveBioBtnText}>Save & Minimize Biometrics</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         {/* Days Row */}
@@ -206,7 +380,7 @@ export default function FitnessScreen() {
             </View>
           ) : (
             routines[selectedDay].map((item) => {
-              const estCal = calculateExerciseCalories(item, parseFloat(weightInput) * 0.4535);
+              const estCal = calculateExerciseCalories(item, weightInKg);
               return (
                 <View key={item.id} style={[styles.exerciseCard, { borderColor: theme.border }]}>
                   <View style={{ flex: 1 }}>
@@ -347,6 +521,22 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 24, fontWeight: 'bold' },
   card: { padding: 16, borderRadius: 12, marginBottom: 16, borderWidth: 1 },
   cardTitle: { fontSize: 12, fontWeight: 'bold' },
+  collapsibleHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  summaryText: { fontSize: 13, marginTop: 4 },
+  unitRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  unitToggleGroup: { flexDirection: 'row', gap: 6 },
+  unitBtn: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 6 },
+  unitBtnText: { fontWeight: 'bold', fontSize: 12 },
+  inputGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  inputBox: { width: '48%', marginBottom: 8 },
+  inputLabel: { fontSize: 12, fontWeight: '600', marginBottom: 6 },
+  input: { padding: 12, borderRadius: 8, fontSize: 14, fontWeight: 'bold', marginBottom: 10 },
+  resultsBox: { padding: 12, borderRadius: 8, marginTop: 10, borderWidth: 1 },
+  resultRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  resultLabel: { fontSize: 13, fontWeight: '600' },
+  resultValue: { fontSize: 14, fontWeight: 'bold' },
+  saveBioBtn: { paddingVertical: 12, borderRadius: 8, alignItems: 'center', marginTop: 12 },
+  saveBioBtnText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 13 },
   daysRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
   dayChip: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center', marginHorizontal: 2 },
   dayChipText: { fontSize: 12, fontWeight: 'bold' },
@@ -365,8 +555,6 @@ const styles = StyleSheet.create({
   modalScroll: { padding: 20, justifyContent: 'center' },
   modalContainer: { borderRadius: 14, padding: 20, borderWidth: 1 },
   modalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 14 },
-  inputLabel: { fontSize: 12, fontWeight: 'bold', marginBottom: 6 },
-  input: { padding: 12, borderRadius: 8, fontSize: 14, fontWeight: 'bold', marginBottom: 10 },
   typeRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
   typeBtn: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
   sectionSubtitle: { fontSize: 11, fontWeight: 'bold', marginVertical: 8 },

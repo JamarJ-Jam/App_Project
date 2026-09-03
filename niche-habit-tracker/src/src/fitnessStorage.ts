@@ -1,56 +1,74 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export interface WorkoutLog {
+export interface SetDetail {
   id: string;
-  type: 'fundamental' | 'gym';
-  exerciseName: string; // e.g., 'Push-ups', 'Running', 'Bench Press'
-  durationMinutes?: number;
-  reps?: number;
-  sets?: number;
-  weightLbs?: number;
-  estimatedCalories: number;
-  date: string; // YYYY-MM-DD
+  weightLoad: string;
+  reps: string;
 }
 
-export interface Biometrics {
-  weightLbs: number;
-  heightInches: number;
-  age: number;
-  targetWeightLbs: number;
+export interface DetailedExercise {
+  id: string;
+  name: string;
+  type: 'strength' | 'cardio';
+  sets: SetDetail[];
+  distance?: string;
+  durationMinutes?: string;
 }
 
-const WORKOUT_KEY = '@accountability_workouts';
-const BIOMETRICS_KEY = '@accountability_biometrics';
+export interface DayRoutine {
+  [day: string]: DetailedExercise[];
+}
 
-export const defaultBiometrics: Biometrics = {
-  weightLbs: 175,
-  heightInches: 70, // 5'10"
-  age: 28,
-  targetWeightLbs: 165,
+export const STORAGE_KEY_ROUTINES = '@fitness_weekly_routines_v2';
+export const STORAGE_KEY_BIOMETRICS = '@fitness_user_biometrics';
+export const STORAGE_KEY_LOGGED_WORKOUTS = '@fitness_logged_workouts';
+
+// Calculate estimated calorie burn based on exercise volume and biometrics
+export const calculateExerciseCalories = (
+  exercise: DetailedExercise,
+  userWeightKg: number = 76
+): number => {
+  if (exercise.type === 'cardio') {
+    const dist = parseFloat(exercise.distance || '0');
+    const mins = parseFloat(exercise.durationMinutes || '30');
+    // ~8 METs for running/moderate cardio
+    const hours = mins / 60;
+    return Math.round(8 * userWeightKg * hours + dist * 50);
+  }
+
+  // Strength training calorie estimation based on volume (Weight x Reps)
+  let totalVolumeKg = 0;
+  let totalReps = 0;
+
+  exercise.sets.forEach((s) => {
+    const w = parseFloat(s.weightLoad || '0');
+    const r = parseFloat(s.reps || '0');
+    totalVolumeKg += w * r;
+    totalReps += r;
+  });
+
+  // Base strength MET calculation (~5 METs) + volume factor
+  const baseCalories = exercise.sets.length * 12;
+  const volumeCalories = (totalVolumeKg * 0.015);
+  return Math.round(baseCalories + volumeCalories);
 };
 
-export const FUNDAMENTAL_EXERCISES = [
-  { name: 'Running', unit: 'minutes', calPerMin: 11.5, icon: '🏃' },
-  { name: 'Walking', unit: 'minutes', calPerMin: 4.5, icon: '🚶' },
-  { name: 'Push-ups', unit: 'reps', calPerRep: 0.5, icon: '💪' },
-  { name: 'Squats', unit: 'reps', calPerRep: 0.6, icon: '🏋️' },
-  { name: 'Plank', unit: 'seconds', calPerMin: 5.0, icon: '🧘' },
-];
+export const getDailyCalorieSummary = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEY_LOGGED_WORKOUTS);
+    if (!raw) return { todayCalories: 0, weeklyCalories: 0 };
 
-export const saveWorkouts = async (workouts: WorkoutLog[]) => {
-  await AsyncStorage.setItem(WORKOUT_KEY, JSON.stringify(workouts));
-};
+    const logs: { date: string; calories: number }[] = JSON.parse(raw);
+    const todayStr = new Date().toISOString().split('T')[0];
 
-export const getWorkouts = async (): Promise<WorkoutLog[]> => {
-  const data = await AsyncStorage.getItem(WORKOUT_KEY);
-  return data ? JSON.parse(data) : [];
-};
+    const todayCalories = logs
+      .filter((l) => l.date === todayStr)
+      .reduce((sum, item) => sum + item.calories, 0);
 
-export const saveBiometrics = async (bio: Biometrics) => {
-  await AsyncStorage.setItem(BIOMETRICS_KEY, JSON.stringify(bio));
-};
+    const weeklyCalories = logs.reduce((sum, item) => sum + item.calories, 0);
 
-export const getBiometrics = async (): Promise<Biometrics> => {
-  const data = await AsyncStorage.getItem(BIOMETRICS_KEY);
-  return data ? JSON.parse(data) : defaultBiometrics;
+    return { todayCalories, weeklyCalories };
+  } catch (e) {
+    return { todayCalories: 0, weeklyCalories: 0 };
+  }
 };
