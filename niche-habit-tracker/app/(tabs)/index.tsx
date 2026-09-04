@@ -12,9 +12,12 @@ import {
 import { LineChart } from 'react-native-chart-kit';
 import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
 import { getDailyCalorieSummary } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/fitnessStorage';
+import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
 
 export default function HomeScreen() {
   const { theme, toggleTheme } = useTheme();
+
+  const { signOut, user } = useAuth();
 
   // Mock initial state for dashboard indicators
   const [efficiency] = useState({
@@ -54,7 +57,7 @@ export default function HomeScreen() {
         <View style={styles.headerRow}>
           <View>
             <Text style={[styles.headerSubtitle, { color: theme.fitnessAccent }]}>
-              MY ACCOUNTABILITY
+              MY ACCOUNTABILITY ({user?.isGuest ? 'GUEST' : user?.email?.split('@')[0]?.toUpperCase()})
             </Text>
             <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>
               Assistant Overview
@@ -62,6 +65,9 @@ export default function HomeScreen() {
           </View>
 
           <View style={styles.toggleContainer}>
+            <TouchableOpacity onPress={signOut} style={{ marginRight: 8 }}>
+              <Text style={{ fontSize: 16 }}>🚪</Text>
+            </TouchableOpacity>
             <Text style={styles.toggleEmoji}>{theme.isDark ? '🌙' : '☀️'}</Text>
             <Switch
               value={theme.isDark}
