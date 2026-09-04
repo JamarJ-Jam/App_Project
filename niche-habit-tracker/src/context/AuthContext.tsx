@@ -3,13 +3,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface User {
   email: string;
+  name?: string;
   isGuest: boolean;
+  provider?: 'email' | 'google';
 }
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   signIn: (email: string) => Promise<void>;
+  signUp: (email: string, name?: string) => Promise<void>;
+  signInWithGoogle: (email: string, name: string) => Promise<void>;
   signInAsGuest: () => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -18,6 +22,8 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   isLoading: true,
   signIn: async () => {},
+  signUp: async () => {},
+  signInWithGoogle: async () => {},
   signInAsGuest: async () => {},
   signOut: async () => {},
 });
@@ -29,7 +35,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Check for existing session on launch
     AsyncStorage.getItem(AUTH_STORAGE_KEY).then((storedUser) => {
       if (storedUser) {
         setUser(JSON.parse(storedUser));
@@ -39,13 +44,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signIn = async (email: string) => {
-    const sessionData: User = { email, isGuest: false };
+    const sessionData: User = { email, isGuest: false, provider: 'email' };
+    setUser(sessionData);
+    await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionData));
+  };
+
+  const signUp = async (email: string, name?: string) => {
+    const sessionData: User = { email, name, isGuest: false, provider: 'email' };
+    setUser(sessionData);
+    await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionData));
+  };
+
+  const signInWithGoogle = async (email: string, name: string) => {
+    const sessionData: User = { email, name, isGuest: false, provider: 'google' };
     setUser(sessionData);
     await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionData));
   };
 
   const signInAsGuest = async () => {
-    const sessionData: User = { email: 'Guest User', isGuest: true };
+    const sessionData: User = { email: 'Guest User', name: 'Guest', isGuest: true };
     setUser(sessionData);
     await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionData));
   };
@@ -56,7 +73,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, signIn, signInAsGuest, signOut }}>
+    <AuthContext.Provider value={{ user, isLoading, signIn, signUp, signInWithGoogle, signInAsGuest, signOut }}>
       {children}
     </AuthContext.Provider>
   );
