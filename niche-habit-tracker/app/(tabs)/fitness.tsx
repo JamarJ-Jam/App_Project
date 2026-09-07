@@ -1,569 +1,494 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
   View,
-  ScrollView,
   SafeAreaView,
+  ScrollView,
   TouchableOpacity,
+  Modal,
   TextInput,
   Alert,
-  Modal,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
-import {
-  DetailedExercise,
-  SetDetail,
-  DayRoutine,
-  STORAGE_KEY_ROUTINES,
-  STORAGE_KEY_BIOMETRICS,
-  STORAGE_KEY_LOGGED_WORKOUTS,
-  calculateExerciseCalories,
-} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/fitnessStorage';
+import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
+import { STORAGE_KEY_BIOMETRICS } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/fitnessStorage';
 
-const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+export const STORAGE_KEY_WORKOUT_HISTORY = '@activity_workout_history';
+
+type CategoryType = 'Gym' | 'Foundational' | 'Stretching';
+
+interface SetItem {
+  reps: string;
+  weight: string;
+}
+
+interface ExerciseItem {
+  id: string;
+  name: string;
+  category: CategoryType;
+  bodyPart: string;
+  sets: SetItem[];
+}
+
+const EXERCISE_LIBRARY: Record<CategoryType, Record<string, string[]>> = {
+  Gym: {
+    Chest: ['Bench Press', 'Incline Dumbbell Press', 'Cable Flyes', 'Chest Press Machine'],
+    Back: ['Lat Pulldown', 'Seated Cable Row', 'Barbell Row', 'Deadlift'],
+    Shoulders: ['Overhead Dumbbell Press', 'Lateral Raises', 'Face Pulls'],
+    Arms: ['Bicep Curls', 'Tricep Rope Pushdown', 'Hammer Curls'],
+    Legs: ['Barbell Squat', 'Leg Press', 'Hamstring Curl', 'Calf Raises'],
+    'Gym Cardio': ['Treadmill Run', 'Stairmaster', 'Elliptical', 'Rowing Machine'],
+  },
+  Foundational: {
+    'Upper Body': ['Push-ups', 'Pike Push-ups', 'Dips', 'Bodyweight Rows'],
+    'Lower Body': ['Bodyweight Squats', 'Lunges', 'Bulgarian Split Squats', 'Glute Bridges'],
+    Core: ['Plank', 'Hanging Leg Raises', 'Russian Twists', 'Ab Wheel Rollouts'],
+    'Bodyweight Cardio': ['Jumping Jacks', 'Burpees', 'Mountain Climbers', 'High Knees'],
+  },
+  Stretching: {
+    'Full Body Mobility': ['World\'s Greatest Stretch', 'Cat-Cow', 'Thoracic Rotations'],
+    'Upper Stretches': ['Doorway Chest Stretch', 'Cross-Body Shoulder Stretch', 'Tricep Stretch'],
+    'Lower Stretches': ['Hamstring Stretch', 'Pigeon Pose', 'Couch Stretch (Quads)'],
+    'Dynamic Warm-Up': ['Arm Circles', 'Leg Swings', 'Hip Openers'],
+  },
+};
 
 export default function FitnessScreen() {
-  const { theme } = useTheme();
+  const { theme = LightTheme } = useTheme() || {};
 
-  // Day Selection & Routine State
-  const [selectedDay, setSelectedDay] = useState<string>('Mon');
-  const [routines, setRoutines] = useState<DayRoutine>({
-    Mon: [], Tue: [], Wed: [], Thu: [], Fri: [], Sat: [], Sun: [],
-  });
-
-  // Biometrics State & Unit Preference
-  const [unit, setUnit] = useState<'lbs' | 'kg'>('lbs');
-  const [weightInput, setWeightInput] = useState('168');
+  const [currentWeight, setCurrentWeight] = useState('168');
+  const [targetWeight, setTargetWeight] = useState('155');
   const [heightCm, setHeightCm] = useState('175');
-  const [targetWeightInput, setTargetWeightInput] = useState('155');
-  const [isBiometricsExpanded, setIsBiometricsExpanded] = useState(false);
+  const [unit, setUnit] = useState<'lbs' | 'kg'>('lbs');
 
-  // Exercise Modal State
-  const [isModalVisible, setIsModalVisible] = useState(false);
-  const [exerciseName, setExerciseName] = useState('');
-  const [exerciseType, setExerciseType] = useState<'strength' | 'cardio'>('strength');
-  const [distance, setDistance] = useState('');
-  const [durationMinutes, setDurationMinutes] = useState('30');
+  const [selectedCategory, setSelectedCategory] = useState<CategoryType>('Gym');
+  const [exercises, setExercises] = useState<ExerciseItem[]>([]);
+
+  const [modalVisible, setModalVisible] = useState(false);
+  const [selectedBodyPart, setSelectedBodyPart] = useState<string>('');
+  const [selectedExerciseName, setSelectedExerciseName] = useState<string>('');
+  const [customExerciseName, setCustomExerciseName] = useState<string>('');
   
-  // Dynamic Sets Array
-  const [sets, setSets] = useState<SetDetail[]>([
-    { id: '1', weightLoad: '175', reps: '8' },
-    { id: '2', weightLoad: '200', reps: '8' },
-  ]);
+  const [initialReps, setInitialReps] = useState('10');
+  const [initialWeight, setInitialWeight] = useState('135');
 
-  useEffect(() => {
-    loadSavedData();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadBiometrics();
+    }, [])
+  );
 
-  const loadSavedData = async () => {
+  const loadBiometrics = async () => {
     try {
-      const savedRoutines = await AsyncStorage.getItem(STORAGE_KEY_ROUTINES);
-      if (savedRoutines) setRoutines(JSON.parse(savedRoutines));
-
-      const savedBiometrics = await AsyncStorage.getItem(STORAGE_KEY_BIOMETRICS);
-      if (savedBiometrics) {
-        const parsed = JSON.parse(savedBiometrics);
-        setUnit(parsed.unit || 'lbs');
-        setWeightInput(parsed.weightInput || '168');
-        setHeightCm(parsed.heightCm || '175');
-        setTargetWeightInput(parsed.targetWeightInput || '155');
+      const savedBio = await AsyncStorage.getItem(STORAGE_KEY_BIOMETRICS);
+      if (savedBio) {
+        const parsed = JSON.parse(savedBio);
+        if (parsed.weightInput) setCurrentWeight(parsed.weightInput);
+        if (parsed.targetWeightInput) setTargetWeight(parsed.targetWeightInput);
+        if (parsed.heightCm) setHeightCm(parsed.heightCm);
+        if (parsed.unit) setUnit(parsed.unit);
       }
     } catch (e) {
-      console.error('Failed to load fitness data', e);
+      console.log('Error loading biometrics on fitness tab:', e);
     }
   };
 
-  const saveRoutinesToStorage = async (updated: DayRoutine) => {
-    setRoutines(updated);
-    await AsyncStorage.setItem(STORAGE_KEY_ROUTINES, JSON.stringify(updated));
+  const calcBMI = (wVal: string, hVal: string, uVal: string) => {
+    const w = parseFloat(wVal);
+    const h = parseFloat(hVal) / 100;
+    if (!w || !h) return 'N/A';
+    const weightKg = uVal === 'lbs' ? w * 0.453592 : w;
+    const bmi = weightKg / (h * h);
+    return bmi.toFixed(1);
   };
 
-  const saveBiometricsToStorage = async () => {
-    const data = { unit, weightInput, heightCm, targetWeightInput };
-    await AsyncStorage.setItem(STORAGE_KEY_BIOMETRICS, JSON.stringify(data));
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setIsBiometricsExpanded(false);
-  };
+  const currentBMI = calcBMI(currentWeight, heightCm, unit);
+  const goalBMI = calcBMI(targetWeight, heightCm, unit);
 
-  // --- Dynamic BMI & Weight Calculations ---
-  const rawWeight = parseFloat(weightInput) || 0;
-  const rawTargetWeight = parseFloat(targetWeightInput) || 0;
-  const rawHeightCm = parseFloat(heightCm) || 0;
-
-  const weightInKg = unit === 'lbs' ? rawWeight * 0.453592 : rawWeight;
-  const targetWeightInKg = unit === 'lbs' ? rawTargetWeight * 0.453592 : rawTargetWeight;
-  const heightM = rawHeightCm / 100;
-
-  const currentBmi =
-    weightInKg > 0 && heightM > 0 ? (weightInKg / (heightM * heightM)).toFixed(1) : '0.0';
-
-  const projectedBmi =
-    targetWeightInKg > 0 && heightM > 0
-      ? (targetWeightInKg / (heightM * heightM)).toFixed(1)
-      : '0.0';
-
-  const weightChangeNeeded =
-    rawWeight > 0 && rawTargetWeight > 0 ? (rawWeight - rawTargetWeight).toFixed(1) : '0.0';
-
-  const getBmiCategory = (bmiValue: number) => {
-    if (bmiValue <= 0) return 'Invalid';
-    if (bmiValue < 18.5) return 'Underweight';
-    if (bmiValue < 25) return 'Normal';
-    if (bmiValue < 30) return 'Overweight';
-    return 'Obese';
-  };
-
-  const handleToggleUnit = (newUnit: 'lbs' | 'kg') => {
-    if (newUnit === unit) return;
-    Haptics.selectionAsync();
-
-    if (rawWeight > 0) {
-      const convertedWeight =
-        newUnit === 'kg' ? (rawWeight * 0.453592).toFixed(1) : (rawWeight / 0.453592).toFixed(1);
-      setWeightInput(convertedWeight);
-    }
-
-    if (rawTargetWeight > 0) {
-      const convertedTarget =
-        newUnit === 'kg'
-          ? (rawTargetWeight * 0.453592).toFixed(1)
-          : (rawTargetWeight / 0.453592).toFixed(1);
-      setTargetWeightInput(convertedTarget);
-    }
-
-    setUnit(newUnit);
-  };
-
-  // Set Handlers
-  const handleAddSet = () => {
-    const lastSet = sets[sets.length - 1];
-    const newSet: SetDetail = {
-      id: Date.now().toString(),
-      weightLoad: lastSet ? lastSet.weightLoad : '100',
-      reps: lastSet ? lastSet.reps : '10',
-    };
-    setSets([...sets, newSet]);
-    Haptics.selectionAsync();
-  };
-
-  const handleUpdateSet = (id: string, field: 'weightLoad' | 'reps', value: string) => {
-    setSets(sets.map((s) => (s.id === id ? { ...s, [field]: value } : s)));
-  };
-
-  const handleRemoveSet = (id: string) => {
-    if (sets.length <= 1) return;
-    setSets(sets.filter((s) => s.id !== id));
+  const openAddModal = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const defaultBodyParts = Object.keys(EXERCISE_LIBRARY[selectedCategory]);
+    setSelectedBodyPart(defaultBodyParts[0] || '');
+    setSelectedExerciseName(EXERCISE_LIBRARY[selectedCategory][defaultBodyParts[0]]?.[0] || '');
+    setCustomExerciseName('');
+    setInitialReps('10');
+    setInitialWeight(selectedCategory === 'Gym' ? '135' : '0');
+    setModalVisible(true);
   };
 
-  // Add Exercise Handler
-  const handleAddExercise = async () => {
-    if (!exerciseName.trim()) {
-      Alert.alert('Missing Name', 'Please enter an exercise name.');
+  const handleAddExercise = () => {
+    const finalName = customExerciseName.trim() || selectedExerciseName;
+    if (!finalName) {
+      Alert.alert('Selection Error', 'Please select or enter an exercise name.');
       return;
     }
 
-    const newEx: DetailedExercise = {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const newEx: ExerciseItem = {
       id: Date.now().toString(),
-      name: exerciseName.trim(),
-      type: exerciseType,
-      sets: exerciseType === 'strength' ? sets : [],
-      distance: exerciseType === 'cardio' ? distance : undefined,
-      durationMinutes: exerciseType === 'cardio' ? durationMinutes : undefined,
+      name: finalName,
+      category: selectedCategory,
+      bodyPart: selectedBodyPart,
+      sets: [{ reps: initialReps || '10', weight: initialWeight || '0' }],
     };
 
-    const currentDayList = routines[selectedDay] || [];
-    const updatedDayList = [...currentDayList, newEx];
-    const updatedRoutines = { ...routines, [selectedDay]: updatedDayList };
+    setExercises([...exercises, newEx]);
+    setModalVisible(false);
+  };
 
-    await saveRoutinesToStorage(updatedRoutines);
+  const addSet = (exId: string) => {
+    Haptics.selectionAsync();
+    setExercises(
+      exercises.map((item) => {
+        if (item.id === exId) {
+          const lastSet = item.sets[item.sets.length - 1] || { reps: '10', weight: '0' };
+          return { ...item, sets: [...item.sets, { reps: lastSet.reps, weight: lastSet.weight }] };
+        }
+        return item;
+      })
+    );
+  };
 
-    // Save Calorie Burn Log
-    const caloriesBurned = calculateExerciseCalories(newEx, weightInKg);
-    const existingLogsRaw = await AsyncStorage.getItem(STORAGE_KEY_LOGGED_WORKOUTS);
-    const existingLogs = existingLogsRaw ? JSON.parse(existingLogsRaw) : [];
-    existingLogs.push({
-      date: new Date().toISOString().split('T')[0],
-      calories: caloriesBurned,
-      exerciseName: newEx.name,
-    });
-    await AsyncStorage.setItem(STORAGE_KEY_LOGGED_WORKOUTS, JSON.stringify(existingLogs));
+  const updateSet = (exId: string, setIndex: number, field: 'reps' | 'weight', value: string) => {
+    setExercises(
+      exercises.map((ex) => {
+        if (ex.id === exId) {
+          const updatedSets = [...ex.sets];
+          updatedSets[setIndex] = { ...updatedSets[setIndex], [field]: value };
+          return { ...ex, sets: updatedSets };
+        }
+        return ex;
+      })
+    );
+  };
+
+  const removeSet = (exId: string, setIndex: number) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setExercises(
+      exercises.map((ex) => {
+        if (ex.id === exId && ex.sets.length > 1) {
+          return { ...ex, sets: ex.sets.filter((_, idx) => idx !== setIndex) };
+        }
+        return ex;
+      })
+    );
+  };
+
+  const logCompletedWorkout = async () => {
+    const filtered = exercises.filter((ex) => ex.category === selectedCategory);
+    if (filtered.length === 0) {
+      Alert.alert('Empty Session', 'Add at least one exercise before logging completion.');
+      return;
+    }
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-    // Reset Form
-    setExerciseName('');
-    setSets([
-      { id: '1', weightLoad: '175', reps: '8' },
-      { id: '2', weightLoad: '200', reps: '8' },
-    ]);
-    setIsModalVisible(false);
+    const newLogEntry = {
+      id: Date.now().toString(),
+      category: selectedCategory,
+      completedAt: new Date().toISOString(),
+      exercises: filtered,
+    };
+
+    try {
+      const existingHistory = await AsyncStorage.getItem(STORAGE_KEY_WORKOUT_HISTORY);
+      const historyArr = existingHistory ? JSON.parse(existingHistory) : [];
+      historyArr.unshift(newLogEntry);
+      await AsyncStorage.setItem(STORAGE_KEY_WORKOUT_HISTORY, JSON.stringify(historyArr));
+
+      // Clear completed routine from active list
+      setExercises(exercises.filter((ex) => ex.category !== selectedCategory));
+      Alert.alert('Workout Logged', `${selectedCategory} session has been logged to your activity history.`);
+    } catch (e) {
+      console.log('Error logging workout history:', e);
+    }
   };
 
-  const handleDeleteExercise = async (id: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const updatedDayList = routines[selectedDay].filter((ex) => ex.id !== id);
-    const updatedRoutines = { ...routines, [selectedDay]: updatedDayList };
-    await saveRoutinesToStorage(updatedRoutines);
-  };
+  const filteredExercises = exercises.filter((ex) => ex.category === selectedCategory);
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={[styles.headerSubtitle, { color: theme.fitnessAccent }]}>FITNESS TRACKER</Text>
-          <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>Workout Planner & Biometrics</Text>
+        {/* Biometrics Summary Header */}
+        <View style={[styles.biometricsCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+          <Text style={[styles.cardHeader, { color: theme.fitnessAccent }]}>BIOMETRICS SUMMARY</Text>
+          <View style={styles.metricsGrid}>
+            <View style={styles.metricBox}>
+              <Text style={[styles.metricLabel, { color: theme.textSecondary }]}>Current Weight</Text>
+              <Text style={[styles.metricValue, { color: theme.textPrimary }]}>{currentWeight} {unit}</Text>
+              <Text style={[styles.metricSub, { color: theme.textSecondary }]}>BMI: {currentBMI}</Text>
+            </View>
+
+            <View style={[styles.divider, { backgroundColor: theme.border }]} />
+
+            <View style={styles.metricBox}>
+              <Text style={[styles.metricLabel, { color: theme.textSecondary }]}>Goal Weight</Text>
+              <Text style={[styles.metricValue, { color: theme.fitnessAccent }]}>{targetWeight} {unit}</Text>
+              <Text style={[styles.metricSub, { color: theme.textSecondary }]}>Proj. BMI: {goalBMI}</Text>
+            </View>
+          </View>
         </View>
 
-        {/* Collapsible Biometrics Section */}
-        <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
-          <TouchableOpacity
-            style={styles.collapsibleHeader}
-            onPress={() => {
-              Haptics.selectionAsync();
-              setIsBiometricsExpanded(!isBiometricsExpanded);
-            }}
-            activeOpacity={0.7}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.cardTitle, { color: theme.textSecondary, marginBottom: 2 }]}>
-                BIOMETRICS SUMMARY
-              </Text>
-              {!isBiometricsExpanded && (
-                <Text style={[styles.summaryText, { color: theme.textPrimary }]}>
-                  Current: <Text style={{ fontWeight: 'bold' }}>{weightInput} {unit}</Text> (BMI: <Text style={{ color: theme.fitnessAccent, fontWeight: 'bold' }}>{currentBmi}</Text>) • Goal BMI: <Text style={{ color: theme.primaryAccent, fontWeight: 'bold' }}>{projectedBmi}</Text>
-                </Text>
-              )}
-            </View>
-            <Text style={{ color: theme.textSecondary, fontSize: 13, fontWeight: 'bold', marginLeft: 8 }}>
-              {isBiometricsExpanded ? '▲ Minimize' : '▼ Expand'}
-            </Text>
-          </TouchableOpacity>
-
-          {isBiometricsExpanded && (
-            <View style={{ marginTop: 14 }}>
-              
-              {/* Unit Switcher */}
-              <View style={styles.unitRow}>
-                <Text style={[styles.inputLabel, { color: theme.textSecondary, marginBottom: 0 }]}>Weight Unit:</Text>
-                <View style={styles.unitToggleGroup}>
-                  <TouchableOpacity
-                    style={[
-                      styles.unitBtn,
-                      { backgroundColor: unit === 'lbs' ? theme.fitnessAccent : theme.isDark ? '#2A2A2A' : '#E2E8F0' },
-                    ]}
-                    onPress={() => handleToggleUnit('lbs')}
-                  >
-                    <Text style={[styles.unitBtnText, { color: unit === 'lbs' ? '#FFF' : theme.textPrimary }]}>lbs</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.unitBtn,
-                      { backgroundColor: unit === 'kg' ? theme.fitnessAccent : theme.isDark ? '#2A2A2A' : '#E2E8F0' },
-                    ]}
-                    onPress={() => handleToggleUnit('kg')}
-                  >
-                    <Text style={[styles.unitBtnText, { color: unit === 'kg' ? '#FFF' : theme.textPrimary }]}>kg</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* Inputs */}
-              <View style={styles.inputGrid}>
-                <View style={styles.inputBox}>
-                  <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>Current Weight ({unit})</Text>
-                  <TextInput
-                    style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-                    keyboardType="numeric"
-                    value={weightInput}
-                    onChangeText={setWeightInput}
-                  />
-                </View>
-
-                <View style={styles.inputBox}>
-                  <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>Height (cm)</Text>
-                  <TextInput
-                    style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-                    keyboardType="numeric"
-                    value={heightCm}
-                    onChangeText={setHeightCm}
-                  />
-                </View>
-
-                <View style={[styles.inputBox, { width: '100%', marginTop: 8 }]}>
-                  <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>Goal Weight ({unit})</Text>
-                  <TextInput
-                    style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-                    keyboardType="numeric"
-                    value={targetWeightInput}
-                    onChangeText={setTargetWeightInput}
-                  />
-                </View>
-              </View>
-
-              {/* Live vs Projected BMI Comparison */}
-              <View style={[styles.resultsBox, { backgroundColor: theme.isDark ? '#1A1A1A' : '#F8FAFC', borderColor: theme.border }]}>
-                <View style={styles.resultRow}>
-                  <Text style={[styles.resultLabel, { color: theme.textSecondary }]}>Current BMI:</Text>
-                  <Text style={[styles.resultValue, { color: theme.fitnessAccent }]}>
-                    {currentBmi} ({getBmiCategory(parseFloat(currentBmi))})
-                  </Text>
-                </View>
-
-                <View style={[styles.resultRow, { marginTop: 8 }]}>
-                  <Text style={[styles.resultLabel, { color: theme.textSecondary }]}>Projected Goal BMI:</Text>
-                  <Text style={[styles.resultValue, { color: theme.primaryAccent }]}>
-                    {projectedBmi} ({getBmiCategory(parseFloat(projectedBmi))})
-                  </Text>
-                </View>
-
-                <View style={[styles.resultRow, { marginTop: 8 }]}>
-                  <Text style={[styles.resultLabel, { color: theme.textSecondary }]}>Target Reduction:</Text>
-                  <Text style={[styles.resultValue, { color: theme.textPrimary }]}>
-                    {weightChangeNeeded} {unit}
-                  </Text>
-                </View>
-              </View>
-
-              <TouchableOpacity
-                style={[styles.saveBioBtn, { backgroundColor: theme.fitnessAccent }]}
-                onPress={saveBiometricsToStorage}
-              >
-                <Text style={styles.saveBioBtnText}>Save & Minimize Biometrics</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-
-        {/* Days Row */}
-        <View style={styles.daysRow}>
-          {DAYS.map((day) => {
-            const isSelected = selectedDay === day;
-            const hasExercises = (routines[day] || []).length > 0;
+        {/* Category Selector */}
+        <View style={styles.categoryRow}>
+          {(['Gym', 'Foundational', 'Stretching'] as CategoryType[]).map((cat) => {
+            const isActive = selectedCategory === cat;
             return (
               <TouchableOpacity
-                key={day}
+                key={cat}
                 style={[
-                  styles.dayChip,
-                  { backgroundColor: isSelected ? theme.fitnessAccent : theme.isDark ? '#2A2A2A' : '#E2E8F0' },
+                  styles.categoryTab,
+                  { backgroundColor: isActive ? theme.fitnessAccent : theme.isDark ? '#1E293B' : '#E2E8F0' },
                 ]}
                 onPress={() => {
                   Haptics.selectionAsync();
-                  setSelectedDay(day);
+                  setSelectedCategory(cat);
                 }}
               >
-                <Text style={[styles.dayChipText, { color: isSelected ? '#FFFFFF' : theme.textPrimary }]}>{day}</Text>
-                {hasExercises && <View style={[styles.dotIndicator, { backgroundColor: isSelected ? '#FFFFFF' : theme.fitnessAccent }]} />}
+                <Text style={[styles.categoryTabText, { color: isActive ? '#FFFFFF' : theme.textPrimary }]}>
+                  {cat}
+                </Text>
               </TouchableOpacity>
             );
           })}
         </View>
 
-        {/* Daily Workout Plan */}
-        <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
-          <View style={styles.routineHeaderRow}>
-            <Text style={[styles.cardTitle, { color: theme.textSecondary }]}>{selectedDay.toUpperCase()} ROUTINE</Text>
-            <TouchableOpacity style={[styles.addExBtn, { backgroundColor: theme.fitnessAccent }]} onPress={() => setIsModalVisible(true)}>
-              <Text style={styles.addExBtnText}>+ Add Exercise</Text>
-            </TouchableOpacity>
+        {/* Action Header */}
+        <View style={styles.actionHeader}>
+          <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>
+            {selectedCategory} Routine ({filteredExercises.length})
+          </Text>
+          <TouchableOpacity style={[styles.addBtn, { backgroundColor: theme.fitnessAccent }]} onPress={openAddModal}>
+            <Text style={styles.addBtnText}>+ Add Exercise</Text>
+          </TouchableOpacity>
+        </View>
+
+        {filteredExercises.length === 0 ? (
+          <View style={[styles.emptyCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+            <Ionicons name="barbell-outline" size={28} color={theme.textSecondary} style={{ marginBottom: 6 }} />
+            <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
+              No exercises logged for {selectedCategory}.
+            </Text>
+            <Text style={[styles.emptySubText, { color: theme.textSecondary }]}>
+              Select target body parts to configure your session.
+            </Text>
           </View>
-
-          {(!routines[selectedDay] || routines[selectedDay].length === 0) ? (
-            <View style={styles.emptyState}>
-              <Text style={{ fontSize: 28, marginBottom: 6 }}>🏋️‍♂️</Text>
-              <Text style={[styles.emptyText, { color: theme.textPrimary }]}>No exercises for {selectedDay}.</Text>
-            </View>
-          ) : (
-            routines[selectedDay].map((item) => {
-              const estCal = calculateExerciseCalories(item, weightInKg);
-              return (
-                <View key={item.id} style={[styles.exerciseCard, { borderColor: theme.border }]}>
-                  <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={[styles.exerciseName, { color: theme.textPrimary }]}>{item.name}</Text>
-                      <Text style={[styles.calorieBadge, { color: theme.fitnessAccent }]}>🔥 ~{estCal} kcal</Text>
-                    </View>
-
-                    {item.type === 'strength' ? (
-                      item.sets.map((s, idx) => (
-                        <Text key={s.id || idx} style={[styles.setDetailText, { color: theme.textSecondary }]}>
-                          Set {idx + 1}: <Text style={{ fontWeight: 'bold', color: theme.textPrimary }}>{s.weightLoad} {unit}</Text> × {s.reps} reps
-                        </Text>
-                      ))
-                    ) : (
-                      <Text style={[styles.setDetailText, { color: theme.textSecondary }]}>
-                        🏃 Distance: {item.distance || 'N/A'} • Duration: {item.durationMinutes} mins
-                      </Text>
-                    )}
+        ) : (
+          <>
+            {filteredExercises.map((ex) => (
+              <View key={ex.id} style={[styles.exerciseCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+                <View style={styles.exerciseHeader}>
+                  <View>
+                    <Text style={[styles.exerciseTitle, { color: theme.textPrimary }]}>{ex.name}</Text>
+                    <Text style={[styles.bodyPartBadge, { color: theme.fitnessAccent }]}>{ex.bodyPart}</Text>
                   </View>
-                  <TouchableOpacity onPress={() => handleDeleteExercise(item.id)}>
-                    <Text style={styles.deleteText}>🗑️</Text>
+                  <TouchableOpacity onPress={() => setExercises(exercises.filter((i) => i.id !== ex.id))}>
+                    <Text style={{ color: '#EF4444', fontWeight: '700', fontSize: 12 }}>Remove</Text>
                   </TouchableOpacity>
                 </View>
-              );
-            })
-          )}
-        </View>
-      </ScrollView>
 
-      {/* Add Exercise & Per-Set Modal */}
-      <Modal visible={isModalVisible} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <ScrollView contentContainerStyle={styles.modalScroll}>
-            <View style={[styles.modalContainer, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
-              <Text style={[styles.modalTitle, { color: theme.textPrimary }]}>Add Exercise to {selectedDay}</Text>
+                <View style={styles.setRowHeader}>
+                  <Text style={[styles.setHeaderLabel, { color: theme.textSecondary, flex: 0.8 }]}>SET</Text>
+                  <Text style={[styles.setHeaderLabel, { color: theme.textSecondary, flex: 1.2 }]}>REPS</Text>
+                  <Text style={[styles.setHeaderLabel, { color: theme.textSecondary, flex: 1.2 }]}>WEIGHT ({unit})</Text>
+                  <View style={{ width: 24 }} />
+                </View>
 
-              <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>Exercise Name:</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-                placeholder="e.g. Barbell Bench Press"
-                placeholderTextColor={theme.textSecondary}
-                value={exerciseName}
-                onChangeText={setExerciseName}
-              />
-
-              {/* Type Switcher */}
-              <View style={styles.typeRow}>
-                <TouchableOpacity
-                  style={[styles.typeBtn, { backgroundColor: exerciseType === 'strength' ? theme.fitnessAccent : theme.isDark ? '#2A2A2A' : '#E2E8F0' }]}
-                  onPress={() => setExerciseType('strength')}
-                >
-                  <Text style={{ color: exerciseType === 'strength' ? '#FFF' : theme.textPrimary, fontWeight: 'bold' }}>🏋️ Strength Sets</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.typeBtn, { backgroundColor: exerciseType === 'cardio' ? theme.fitnessAccent : theme.isDark ? '#2A2A2A' : '#E2E8F0' }]}
-                  onPress={() => setExerciseType('cardio')}
-                >
-                  <Text style={{ color: exerciseType === 'cardio' ? '#FFF' : theme.textPrimary, fontWeight: 'bold' }}>🏃 Cardio</Text>
-                </TouchableOpacity>
-              </View>
-
-              {exerciseType === 'strength' ? (
-                <View>
-                  <Text style={[styles.sectionSubtitle, { color: theme.textSecondary }]}>CONFIGURE SETS & WEIGHTS:</Text>
-                  {sets.map((s, index) => (
-                    <View key={s.id} style={styles.setRow}>
-                      <Text style={[styles.setLabel, { color: theme.textPrimary }]}>Set {index + 1}</Text>
+                {ex.sets.map((s, idx) => (
+                  <View key={idx} style={styles.setRow}>
+                    <Text style={[styles.setNumber, { color: theme.textPrimary, flex: 0.8 }]}>Set {idx + 1}</Text>
+                    
+                    <View style={{ flex: 1.2, paddingRight: 6 }}>
                       <TextInput
-                        style={[styles.setContainerInput, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-                        placeholder={`Weight (${unit})`}
-                        placeholderTextColor={theme.textSecondary}
-                        keyboardType="numeric"
-                        value={s.weightLoad}
-                        onChangeText={(v) => handleUpdateSet(s.id, 'weightLoad', v)}
-                      />
-                      <TextInput
-                        style={[styles.setContainerInput, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-                        placeholder="Reps"
-                        placeholderTextColor={theme.textSecondary}
+                        style={[styles.inlineInput, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
                         keyboardType="numeric"
                         value={s.reps}
-                        onChangeText={(v) => handleUpdateSet(s.id, 'reps', v)}
+                        onChangeText={(val) => updateSet(ex.id, idx, 'reps', val)}
                       />
-                      {sets.length > 1 && (
-                        <TouchableOpacity onPress={() => handleRemoveSet(s.id)}>
-                          <Text style={{ fontSize: 16 }}>❌</Text>
-                        </TouchableOpacity>
-                      )}
                     </View>
-                  ))}
 
-                  <TouchableOpacity style={[styles.addSetBtn, { borderColor: theme.fitnessAccent }]} onPress={handleAddSet}>
-                    <Text style={[styles.addSetBtnText, { color: theme.fitnessAccent }]}>+ Add Another Set</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <View style={{ marginTop: 8 }}>
-                  <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>Distance (Optional):</Text>
-                  <TextInput
-                    style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-                    placeholder="e.g. 5 km or 3.2 mi"
-                    placeholderTextColor={theme.textSecondary}
-                    value={distance}
-                    onChangeText={setDistance}
-                  />
-                  <Text style={[styles.inputLabel, { color: theme.textSecondary, marginTop: 8 }]}>Duration (Minutes):</Text>
-                  <TextInput
-                    style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-                    keyboardType="numeric"
-                    value={durationMinutes}
-                    onChangeText={setDurationMinutes}
-                  />
-                </View>
-              )}
+                    <View style={{ flex: 1.2, paddingRight: 6 }}>
+                      <TextInput
+                        style={[styles.inlineInput, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
+                        keyboardType="numeric"
+                        value={s.weight}
+                        onChangeText={(val) => updateSet(ex.id, idx, 'weight', val)}
+                      />
+                    </View>
 
-              <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.cancelBtn, { backgroundColor: theme.isDark ? '#2A2A2A' : '#E2E8F0' }]} onPress={() => setIsModalVisible(false)}>
-                  <Text style={{ color: theme.textSecondary, fontWeight: '600' }}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.saveBtn, { backgroundColor: theme.fitnessAccent }]} onPress={handleAddExercise}>
-                  <Text style={{ color: '#FFFFFF', fontWeight: 'bold' }}>Save Exercise</Text>
+                    {ex.sets.length > 1 ? (
+                      <TouchableOpacity style={{ width: 24, alignItems: 'center' }} onPress={() => removeSet(ex.id, idx)}>
+                        <Text style={{ color: '#EF4444', fontWeight: 'bold' }}>✕</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={{ width: 24 }} />
+                    )}
+                  </View>
+                ))}
+
+                <TouchableOpacity style={styles.addSetBtn} onPress={() => addSet(ex.id)}>
+                  <Text style={{ color: theme.fitnessAccent, fontWeight: '700', fontSize: 12 }}>+ Add Set</Text>
                 </TouchableOpacity>
               </View>
+            ))}
+
+            {/* Complete & Log Session Button */}
+            <TouchableOpacity
+              style={[styles.completeSessionBtn, { backgroundColor: theme.primaryAccent }]}
+              onPress={logCompletedWorkout}
+            >
+              <Ionicons name="checkmark-done-circle-outline" size={20} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.completeSessionBtnText}>Log Completed {selectedCategory} Session</Text>
+            </TouchableOpacity>
+          </>
+        )}
+
+      </ScrollView>
+
+      {/* Modal Picker */}
+      <Modal visible={modalVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: theme.cardBackground }]}>
+            <Text style={[styles.modalTitle, { color: theme.textPrimary }]}>
+              Add {selectedCategory} Exercise
+            </Text>
+
+            <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>1. Target Area / Body Part</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+              {Object.keys(EXERCISE_LIBRARY[selectedCategory]).map((part) => (
+                <TouchableOpacity
+                  key={part}
+                  style={[
+                    styles.chipBtn,
+                    { backgroundColor: selectedBodyPart === part ? theme.fitnessAccent : theme.isDark ? '#2A2A2A' : '#E2E8F0' },
+                  ]}
+                  onPress={() => {
+                    setSelectedBodyPart(part);
+                    setSelectedExerciseName(EXERCISE_LIBRARY[selectedCategory][part]?.[0] || '');
+                  }}
+                >
+                  <Text style={{ color: selectedBodyPart === part ? '#FFF' : theme.textPrimary, fontWeight: '700', fontSize: 12 }}>
+                    {part}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>2. Select Movement</Text>
+            <ScrollView style={{ maxHeight: 110, marginBottom: 12 }}>
+              {(EXERCISE_LIBRARY[selectedCategory][selectedBodyPart] || []).map((exName) => (
+                <TouchableOpacity
+                  key={exName}
+                  style={[
+                    styles.exerciseOption,
+                    { backgroundColor: selectedExerciseName === exName ? (theme.isDark ? '#334155' : '#E0F2FE') : 'transparent' },
+                  ]}
+                  onPress={() => {
+                    setSelectedExerciseName(exName);
+                    setCustomExerciseName('');
+                  }}
+                >
+                  <Text style={{ color: theme.textPrimary, fontWeight: selectedExerciseName === exName ? 'bold' : 'normal' }}>
+                    {selectedExerciseName === exName ? '✓ ' : ''}{exName}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>Or Custom Movement</Text>
+            <TextInput
+              style={[styles.modalInput, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
+              placeholder="e.g. Bulgarian Split Squat"
+              placeholderTextColor={theme.textSecondary}
+              value={customExerciseName}
+              onChangeText={setCustomExerciseName}
+            />
+
+            <View style={styles.gridRow}>
+              <View style={{ width: '48%' }}>
+                <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>Starting Reps</Text>
+                <TextInput
+                  style={[styles.modalInput, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
+                  keyboardType="numeric"
+                  value={initialReps}
+                  onChangeText={setInitialReps}
+                />
+              </View>
+              <View style={{ width: '48%' }}>
+                <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>Starting Weight ({unit})</Text>
+                <TextInput
+                  style={[styles.modalInput, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
+                  keyboardType="numeric"
+                  value={initialWeight}
+                  onChangeText={setInitialWeight}
+                />
+              </View>
             </View>
-          </ScrollView>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: theme.border }]} onPress={() => setModalVisible(false)}>
+                <Text style={{ color: theme.textPrimary, fontWeight: '700' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: theme.fitnessAccent }]} onPress={handleAddExercise}>
+                <Text style={{ color: '#FFF', fontWeight: '700' }}>Add to Routine</Text>
+              </TouchableOpacity>
+            </View>
+
+          </View>
         </View>
       </Modal>
+
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  scrollContent: { padding: 16 },
-  header: { marginBottom: 16 },
-  headerSubtitle: { fontSize: 12, fontWeight: 'bold', letterSpacing: 1 },
-  headerTitle: { fontSize: 24, fontWeight: 'bold' },
-  card: { padding: 16, borderRadius: 12, marginBottom: 16, borderWidth: 1 },
-  cardTitle: { fontSize: 12, fontWeight: 'bold' },
-  collapsibleHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  summaryText: { fontSize: 13, marginTop: 4 },
-  unitRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  unitToggleGroup: { flexDirection: 'row', gap: 6 },
-  unitBtn: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 6 },
-  unitBtnText: { fontWeight: 'bold', fontSize: 12 },
-  inputGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
-  inputBox: { width: '48%', marginBottom: 8 },
-  inputLabel: { fontSize: 12, fontWeight: '600', marginBottom: 6 },
-  input: { padding: 12, borderRadius: 8, fontSize: 14, fontWeight: 'bold', marginBottom: 10 },
-  resultsBox: { padding: 12, borderRadius: 8, marginTop: 10, borderWidth: 1 },
-  resultRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  resultLabel: { fontSize: 13, fontWeight: '600' },
-  resultValue: { fontSize: 14, fontWeight: 'bold' },
-  saveBioBtn: { paddingVertical: 12, borderRadius: 8, alignItems: 'center', marginTop: 12 },
-  saveBioBtnText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 13 },
-  daysRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
-  dayChip: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center', marginHorizontal: 2 },
-  dayChipText: { fontSize: 12, fontWeight: 'bold' },
-  dotIndicator: { width: 4, height: 4, borderRadius: 2, marginTop: 4 },
-  routineHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  addExBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 },
-  addExBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: 'bold' },
-  emptyState: { alignItems: 'center', paddingVertical: 24 },
-  emptyText: { fontSize: 15, fontWeight: 'bold' },
-  exerciseCard: { paddingVertical: 12, borderBottomWidth: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  exerciseName: { fontSize: 15, fontWeight: 'bold' },
-  calorieBadge: { fontSize: 12, fontWeight: 'bold' },
-  setDetailText: { fontSize: 12, marginTop: 4 },
-  deleteText: { fontSize: 16, padding: 4 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center' },
-  modalScroll: { padding: 20, justifyContent: 'center' },
-  modalContainer: { borderRadius: 14, padding: 20, borderWidth: 1 },
-  modalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 14 },
-  typeRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
-  typeBtn: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
-  sectionSubtitle: { fontSize: 11, fontWeight: 'bold', marginVertical: 8 },
-  setRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  setLabel: { width: 42, fontSize: 12, fontWeight: 'bold' },
-  setContainerInput: { flex: 1, padding: 10, borderRadius: 8, fontSize: 13, fontWeight: 'bold' },
-  addSetBtn: { paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderStyle: 'dashed', alignItems: 'center', marginVertical: 10 },
-  addSetBtnText: { fontSize: 12, fontWeight: 'bold' },
-  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 14, gap: 10 },
-  cancelBtn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8 },
-  saveBtn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8 },
+  scrollContent: { padding: 20 },
+  biometricsCard: { padding: 16, borderRadius: 14, borderWidth: 1, marginBottom: 16 },
+  cardHeader: { fontSize: 11, fontWeight: '800', letterSpacing: 1, marginBottom: 10 },
+  metricsGrid: { flexDirection: 'row', alignItems: 'center' },
+  metricBox: { flex: 1, alignItems: 'center' },
+  metricLabel: { fontSize: 11, fontWeight: '600', marginBottom: 2 },
+  metricValue: { fontSize: 20, fontWeight: '800' },
+  metricSub: { fontSize: 11, marginTop: 2 },
+  divider: { width: 1, height: '80%' },
+  categoryRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  categoryTab: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
+  categoryTabText: { fontWeight: '700', fontSize: 12 },
+  actionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  sectionTitle: { fontSize: 15, fontWeight: '700' },
+  addBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  addBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 12 },
+  emptyCard: { padding: 24, borderRadius: 12, borderWidth: 1, alignItems: 'center' },
+  emptyText: { fontWeight: '700', fontSize: 14, marginBottom: 2 },
+  emptySubText: { fontSize: 12 },
+  exerciseCard: { padding: 14, borderRadius: 12, borderWidth: 1, marginBottom: 12 },
+  exerciseHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 },
+  exerciseTitle: { fontSize: 15, fontWeight: '700' },
+  bodyPartBadge: { fontSize: 11, fontWeight: '600' },
+  setRowHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  setHeaderLabel: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  setRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  setNumber: { fontSize: 12, fontWeight: '700' },
+  inlineInput: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 6, fontSize: 13, fontWeight: '700', textAlign: 'center' },
+  addSetBtn: { marginTop: 6, alignItems: 'flex-start' },
+  completeSessionBtn: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingVertical: 14, borderRadius: 10, marginTop: 8 },
+  completeSessionBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
+  gridRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
+  modalContent: { padding: 20, borderRadius: 16 },
+  modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 14 },
+  inputLabel: { fontSize: 11, fontWeight: '700', marginBottom: 4 },
+  chipBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginRight: 8 },
+  exerciseOption: { padding: 8, borderRadius: 6, marginBottom: 2 },
+  modalInput: { padding: 10, borderRadius: 8, fontSize: 13, marginBottom: 10 },
+  modalActions: { flexDirection: 'row', gap: 10, justifyContent: 'flex-end', marginTop: 8 },
+  modalBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 },
 });
