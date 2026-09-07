@@ -9,9 +9,11 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
 import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
 import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
@@ -28,12 +30,12 @@ export default function SignUpScreen() {
 
   const handleSignUp = async () => {
     if (!email.trim() || !password.trim() || !fullName.trim()) {
-      Alert.alert('Missing Fields', 'Please complete all fields to create your account.');
+      Alert.alert('Missing Fields', 'Please complete all required fields.');
       return;
     }
 
     if (password !== confirmPassword) {
-      Alert.alert('Password Mismatch', 'Passwords do not match. Please re-enter.');
+      Alert.alert('Password Mismatch', 'Passwords do not match. Please verify.');
       return;
     }
 
@@ -52,85 +54,101 @@ export default function SignUpScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.innerContainer}
+        style={{ flex: 1 }}
       >
-        <View style={styles.headerBox}>
-          <Text style={[styles.brandSubtitle, { color: theme.fitnessAccent }]}>
-            ACCOUNTABILITY APP
-          </Text>
-          <Text style={[styles.brandTitle, { color: theme.textPrimary }]}>Create Account</Text>
-          <Text style={[styles.brandDescription, { color: theme.textSecondary }]}>
-            Start tracking workouts, biometrics, and daily efficiency goals.
-          </Text>
-        </View>
-
-        <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
-          <TouchableOpacity
-            style={[styles.googleBtn, { backgroundColor: theme.isDark ? '#2A2A2A' : '#FFFFFF', borderColor: theme.border }]}
-            onPress={handleGoogleAuth}
-          >
-            <Text style={[styles.googleBtnText, { color: theme.textPrimary }]}>🌐 Continue with Google</Text>
-          </TouchableOpacity>
-
-          <View style={styles.dividerRow}>
-            <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
-            <Text style={[styles.dividerText, { color: theme.textSecondary }]}>OR WITH EMAIL</Text>
-            <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          
+          {/* Header Branding */}
+          <View style={styles.headerBox}>
+            <View style={[styles.iconBadge, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+              <Ionicons name="shield-checkmark-outline" size={24} color={theme.fitnessAccent} />
+            </View>
+            <Text style={[styles.brandSubtitle, { color: theme.fitnessAccent }]}>ACCOUNTABILITY OS</Text>
+            <Text style={[styles.brandTitle, { color: theme.textPrimary }]}>Create Your Account</Text>
+            <Text style={[styles.brandDescription, { color: theme.textSecondary }]}>
+              Build habits, optimize shift schedules, and track baseline metrics.
+            </Text>
           </View>
 
-          <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>Full Name</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-            placeholder="John Doe"
-            placeholderTextColor={theme.textSecondary}
-            value={fullName}
-            onChangeText={setFullName}
-          />
+          {/* Form Card */}
+          <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+            
+            {/* Google OAuth Button with Icon */}
+            <TouchableOpacity
+              style={[
+                styles.googleBtn,
+                { backgroundColor: theme.isDark ? '#2A2A2A' : '#FFFFFF', borderColor: theme.border },
+              ]}
+              onPress={handleGoogleAuth}
+            >
+              <Ionicons name="logo-google" size={18} color="#EA4335" style={{ marginRight: 8 }} />
+              <Text style={[styles.googleBtnText, { color: theme.textPrimary }]}>Sign up with Google</Text>
+            </TouchableOpacity>
 
-          <Text style={[styles.inputLabel, { color: theme.textSecondary, marginTop: 10 }]}>Email Address</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-            placeholder="name@example.com"
-            placeholderTextColor={theme.textSecondary}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            value={email}
-            onChangeText={setEmail}
-          />
+            <View style={styles.dividerRow}>
+              <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
+              <Text style={[styles.dividerText, { color: theme.textSecondary }]}>OR WITH EMAIL</Text>
+              <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
+            </View>
 
-          <Text style={[styles.inputLabel, { color: theme.textSecondary, marginTop: 10 }]}>Password</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-            placeholder="••••••••"
-            placeholderTextColor={theme.textSecondary}
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-          />
+            <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>Full Name</Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
+              placeholder="Alex Morgan"
+              placeholderTextColor={theme.textSecondary}
+              value={fullName}
+              onChangeText={setFullName}
+            />
 
-          <Text style={[styles.inputLabel, { color: theme.textSecondary, marginTop: 10 }]}>Confirm Password</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-            placeholder="••••••••"
-            placeholderTextColor={theme.textSecondary}
-            secureTextEntry
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-          />
+            <Text style={[styles.inputLabel, { color: theme.textSecondary, marginTop: 12 }]}>Email Address</Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
+              placeholder="alex@example.com"
+              placeholderTextColor={theme.textSecondary}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              value={email}
+              onChangeText={setEmail}
+            />
 
-          <TouchableOpacity
-            style={[styles.signUpBtn, { backgroundColor: theme.fitnessAccent }]}
-            onPress={handleSignUp}
-          >
-            <Text style={styles.signUpBtnText}>Create Account</Text>
-          </TouchableOpacity>
+            <Text style={[styles.inputLabel, { color: theme.textSecondary, marginTop: 12 }]}>Password</Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
+              placeholder="••••••••"
+              placeholderTextColor={theme.textSecondary}
+              secureTextEntry
+              value={password}
+              onChangeText={setPassword}
+            />
 
-          <TouchableOpacity style={{ marginTop: 16, alignItems: 'center' }} onPress={() => router.push('/auth/login')}>
-            <Text style={{ color: theme.textSecondary, fontSize: 13 }}>
-              Already have an account? <Text style={{ color: theme.primaryAccent, fontWeight: 'bold' }}>Sign In</Text>
-            </Text>
-          </TouchableOpacity>
-        </View>
+            <Text style={[styles.inputLabel, { color: theme.textSecondary, marginTop: 12 }]}>Confirm Password</Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
+              placeholder="••••••••"
+              placeholderTextColor={theme.textSecondary}
+              secureTextEntry
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+            />
+
+            <TouchableOpacity
+              style={[styles.signUpBtn, { backgroundColor: theme.fitnessAccent }]}
+              onPress={handleSignUp}
+            >
+              <Text style={styles.signUpBtnText}>Get Started →</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{ marginTop: 16, alignItems: 'center' }}
+              onPress={() => router.push('/auth/login')}
+            >
+              <Text style={{ color: theme.textSecondary, fontSize: 13 }}>
+                Already registered? <Text style={{ color: theme.primaryAccent, fontWeight: '700' }}>Sign In</Text>
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -138,19 +156,20 @@ export default function SignUpScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  innerContainer: { flex: 1, padding: 20, justifyContent: 'center' },
-  headerBox: { marginBottom: 16, alignItems: 'center' },
-  brandSubtitle: { fontSize: 12, fontWeight: 'bold', letterSpacing: 1.5, marginBottom: 4 },
-  brandTitle: { fontSize: 26, fontWeight: 'bold', marginBottom: 6 },
-  brandDescription: { fontSize: 12, textAlign: 'center', paddingHorizontal: 20 },
-  card: { padding: 18, borderRadius: 14, borderWidth: 1 },
-  googleBtn: { paddingVertical: 12, borderRadius: 8, alignItems: 'center', borderWidth: 1 },
-  googleBtnText: { fontWeight: 'bold', fontSize: 14 },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 14 },
+  scrollContent: { padding: 20, justifyContent: 'center', minHeight: '100%' },
+  headerBox: { marginBottom: 20, alignItems: 'center' },
+  iconBadge: { width: 48, height: 48, borderRadius: 24, borderWidth: 1, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
+  brandSubtitle: { fontSize: 11, fontWeight: '800', letterSpacing: 1.5, marginBottom: 4 },
+  brandTitle: { fontSize: 26, fontWeight: '800', marginBottom: 6 },
+  brandDescription: { fontSize: 13, textAlign: 'center', paddingHorizontal: 20 },
+  card: { padding: 20, borderRadius: 16, borderWidth: 1 },
+  googleBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 10, borderWidth: 1 },
+  googleBtnText: { fontWeight: '700', fontSize: 14 },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 16 },
   dividerLine: { flex: 1, height: 1 },
-  dividerText: { marginHorizontal: 10, fontSize: 10, fontWeight: 'bold' },
-  inputLabel: { fontSize: 11, fontWeight: 'bold', marginBottom: 4 },
-  input: { padding: 10, borderRadius: 8, fontSize: 14, fontWeight: '600' },
-  signUpBtn: { paddingVertical: 13, borderRadius: 8, alignItems: 'center', marginTop: 16 },
-  signUpBtnText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 14 },
+  dividerText: { marginHorizontal: 10, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  inputLabel: { fontSize: 11, fontWeight: '700', marginBottom: 6 },
+  input: { padding: 12, borderRadius: 8, fontSize: 14, fontWeight: '600' },
+  signUpBtn: { paddingVertical: 14, borderRadius: 10, alignItems: 'center', marginTop: 18 },
+  signUpBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
 });
