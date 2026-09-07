@@ -1,11 +1,36 @@
-export const ThemeColors = {
-  background: '#F4F7FB', // Soft Slate-Blue White
-  cardBackground: '#FFFFFF', // Clean White Cards
-  border: '#E1E8F0', // Soft Slate Border
-  textPrimary: '#1E293B', // Slate Deep Navy/Gray
-  textSecondary: '#64748B', // Slate Muted Blue
-  primaryAccent: '#2563EB', // Core Royal/Slate Blue
-  fitnessAccent: '#059669', // Fresh Emerald Green
-  efficiencyAccent: '#0284C7', // Vivid Ocean Blue
-  cardShadow: 'rgba(148, 163, 184, 0.12)',
+export interface Theme {
+  isDark: boolean;
+  background: string;
+  cardBackground: string;
+  textPrimary: string;
+  textSecondary: string;
+  border: string;
+  primaryAccent: string;
+  fitnessAccent: string;
+}
+
+export const LightTheme: Theme = {
+  isDark: false,
+  background: '#F8FAFC',
+  cardBackground: '#FFFFFF',
+  textPrimary: '#0F172A',
+  textSecondary: '#64748B',
+  border: '#E2E8F0',
+  primaryAccent: '#3B82F6',
+  fitnessAccent: '#0EA5E9',
 };
+
+export const DarkTheme: Theme = {
+  isDark: true,
+  background: '#0F172A',
+  cardBackground: '#1E293B',
+  textPrimary: '#F8FAFC',
+  textSecondary: '#94A3B8',
+  border: '#334155',
+  primaryAccent: '#3B82F6',
+  fitnessAccent: '#38BDF8',
+};
+
+// Aliasing for backward compatibility if any screen uses lightTheme/darkTheme lowercase
+export const lightTheme = LightTheme;
+export const darkTheme = DarkTheme;

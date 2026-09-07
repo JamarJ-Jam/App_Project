@@ -14,9 +14,10 @@ import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
 import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
+import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
 
 export default function LoginScreen() {
-  const { theme } = useTheme();
+  const { theme = LightTheme } = useTheme() || {};
   const { signIn, signInWithGoogle, signInAsGuest } = useAuth();
   const router = useRouter();
 
@@ -37,7 +38,7 @@ export default function LoginScreen() {
   const handleGoogleAuth = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     await signInWithGoogle('user@gmail.com', 'Google User');
-    router.replace('/(tabs)');
+    router.replace('/auth/onboarding');
   };
 
   const handleGuestLogin = async () => {
@@ -63,7 +64,6 @@ export default function LoginScreen() {
         </View>
 
         <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
-          {/* Google Sign-In */}
           <TouchableOpacity
             style={[styles.googleBtn, { backgroundColor: theme.isDark ? '#2A2A2A' : '#FFFFFF', borderColor: theme.border }]}
             onPress={handleGoogleAuth}

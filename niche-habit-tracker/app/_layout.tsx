@@ -12,10 +12,13 @@ function RootLayoutNav() {
     if (isLoading) return;
 
     const inAuthGroup = segments[0] === 'auth';
+    const isEditingOnboarding = segments[1] === 'onboarding';
 
     if (!user && !inAuthGroup) {
+      // Unauthenticated users belong in login
       router.replace('/auth/login');
-    } else if (user && inAuthGroup) {
+    } else if (user && inAuthGroup && !isEditingOnboarding) {
+      // Authenticated users on login/signup go to tabs, but ALLOW onboarding
       router.replace('/(tabs)');
     }
   }, [user, isLoading, segments]);
@@ -24,6 +27,7 @@ function RootLayoutNav() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="auth/login" />
       <Stack.Screen name="auth/signup" />
+      <Stack.Screen name="auth/onboarding" />
       <Stack.Screen name="(tabs)" />
     </Stack>
   );

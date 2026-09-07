@@ -14,9 +14,10 @@ import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
 import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
+import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
 
 export default function SignUpScreen() {
-  const { theme } = useTheme();
+  const { theme = LightTheme } = useTheme() || {};
   const { signUp, signInWithGoogle } = useAuth();
   const router = useRouter();
 
@@ -38,14 +39,13 @@ export default function SignUpScreen() {
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     await signUp(email.trim(), fullName.trim());
-    router.replace('/(tabs)');
+    router.replace('/auth/onboarding');
   };
 
   const handleGoogleAuth = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    // Simulates Google OAuth flow prompt
     await signInWithGoogle('user@gmail.com', 'Google User');
-    router.replace('/(tabs)');
+    router.replace('/auth/onboarding');
   };
 
   return (
@@ -65,7 +65,6 @@ export default function SignUpScreen() {
         </View>
 
         <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
-          {/* Google Sign-In Option */}
           <TouchableOpacity
             style={[styles.googleBtn, { backgroundColor: theme.isDark ? '#2A2A2A' : '#FFFFFF', borderColor: theme.border }]}
             onPress={handleGoogleAuth}
