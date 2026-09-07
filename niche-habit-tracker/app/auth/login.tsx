@@ -40,7 +40,7 @@ export default function LoginScreen() {
   const handleGoogleAuth = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     await signInWithGoogle('user@gmail.com', 'Google User');
-    router.replace('/home/jamarj/repos/App/App_Project/niche-habit-tracker/app/auth/onboarding');
+    router.replace('/auth/onboarding');
   };
 
   const handleGuestLogin = async () => {
