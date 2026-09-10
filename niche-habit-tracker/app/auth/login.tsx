@@ -6,25 +6,25 @@ import {
   TextInput,
   TouchableOpacity,
   SafeAreaView,
-  Alert,
   KeyboardAvoidingView,
   Platform,
-  ScrollView,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
-import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
 import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
+import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
 
 export default function LoginScreen() {
   const { theme = LightTheme } = useTheme() || {};
-  const { signIn, signInWithGoogle, signInAsGuest } = useAuth();
   const router = useRouter();
+  const { signIn, signInWithGoogle, signInAsGuest } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
@@ -34,7 +34,7 @@ export default function LoginScreen() {
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     await signIn(email.trim());
-    router.replace('/(tabs)');
+    router.replace('/(tabs)/dashboard');
   };
 
   const handleGoogleAuth = async () => {
@@ -46,102 +46,108 @@ export default function LoginScreen() {
   const handleGuestLogin = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     await signInAsGuest();
-    router.replace('/(tabs)');
+    router.replace('/(tabs)/dashboard');
   };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{ flex: 1 }}
+        style={styles.keyboardView}
       >
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          
-          {/* Header Branding */}
-          <View style={styles.headerBox}>
-            <View style={[styles.iconBadge, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
-              <Ionicons name="key-outline" size={24} color={theme.primaryAccent} />
+        <View style={styles.headerContainer}>
+          <TouchableOpacity
+            style={[styles.backButton, { borderColor: theme.border }]}
+            onPress={() => router.back()}
+          >
+            <Ionicons name="arrow-back" size={20} color={theme.textPrimary} />
+          </TouchableOpacity>
+          <Text style={[styles.title, { color: theme.textPrimary }]}>Welcome Back</Text>
+          <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
+            Sign in to continue tracking your accountability goals
+          </Text>
+        </View>
+
+        <View style={styles.formContainer}>
+          {/* Email Input */}
+          <View style={styles.inputGroup}>
+            <Text style={[styles.label, { color: theme.textPrimary }]}>Email Address</Text>
+            <View style={[styles.inputWrapper, { borderColor: theme.border, backgroundColor: theme.cardBackground }]}>
+              <Ionicons name="mail-outline" size={20} color={theme.textSecondary} style={styles.inputIcon} />
+              <TextInput
+                style={[styles.input, { color: theme.textPrimary }]}
+                placeholder="alex@example.com"
+                placeholderTextColor={theme.textSecondary}
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
             </View>
-            <Text style={[styles.brandSubtitle, { color: theme.fitnessAccent }]}>ACCOUNTABILITY OS</Text>
-            <Text style={[styles.brandTitle, { color: theme.textPrimary }]}>Welcome Back</Text>
-            <Text style={[styles.brandDescription, { color: theme.textSecondary }]}>
-              Sign in to access your workouts, efficiency score, and fuel logs.
-            </Text>
           </View>
 
-          {/* Form Card */}
-          <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
-            
-            <TouchableOpacity
-              style={[
-                styles.googleBtn,
-                { backgroundColor: theme.isDark ? '#2A2A2A' : '#FFFFFF', borderColor: theme.border },
-              ]}
-              onPress={handleGoogleAuth}
-            >
-              <Ionicons name="logo-google" size={18} color="#EA4335" style={{ marginRight: 8 }} />
-              <Text style={[styles.googleBtnText, { color: theme.textPrimary }]}>Sign in with Google</Text>
-            </TouchableOpacity>
-
-            <View style={styles.dividerRow}>
-              <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
-              <Text style={[styles.dividerText, { color: theme.textSecondary }]}>OR WITH EMAIL</Text>
-              <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
+          {/* Password Input */}
+          <View style={styles.inputGroup}>
+            <Text style={[styles.label, { color: theme.textPrimary }]}>Password</Text>
+            <View style={[styles.inputWrapper, { borderColor: theme.border, backgroundColor: theme.cardBackground }]}>
+              <Ionicons name="lock-closed-outline" size={20} color={theme.textSecondary} style={styles.inputIcon} />
+              <TextInput
+                style={[styles.input, { color: theme.textPrimary }]}
+                placeholder="••••••••"
+                placeholderTextColor={theme.textSecondary}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+              />
+              <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                <Ionicons
+                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                  size={20}
+                  color={theme.textSecondary}
+                />
+              </TouchableOpacity>
             </View>
-
-            <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>Email Address</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-              placeholder="name@example.com"
-              placeholderTextColor={theme.textSecondary}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              value={email}
-              onChangeText={setEmail}
-            />
-
-            <Text style={[styles.inputLabel, { color: theme.textSecondary, marginTop: 12 }]}>Password</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-              placeholder="••••••••"
-              placeholderTextColor={theme.textSecondary}
-              secureTextEntry
-              value={password}
-              onChangeText={setPassword}
-            />
-
-            <TouchableOpacity
-              style={[styles.loginBtn, { backgroundColor: theme.primaryAccent }]}
-              onPress={handleLogin}
-            >
-              <Text style={styles.loginBtnText}>Sign In</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={{ marginTop: 16, alignItems: 'center' }}
-              onPress={() => router.push('/auth/signup')}
-            >
-              <Text style={{ color: theme.textSecondary, fontSize: 13 }}>
-                Don't have an account? <Text style={{ color: theme.fitnessAccent, fontWeight: '700' }}>Sign Up</Text>
-              </Text>
-            </TouchableOpacity>
-
-            <View style={styles.dividerRow}>
-              <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
-              <Text style={[styles.dividerText, { color: theme.textSecondary }]}>GUEST ACCESS</Text>
-              <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
-            </View>
-
-            <TouchableOpacity
-              style={[styles.guestBtn, { borderColor: theme.border }]}
-              onPress={handleGuestLogin}
-            >
-              <Ionicons name="person-outline" size={16} color={theme.textPrimary} style={{ marginRight: 6 }} />
-              <Text style={[styles.guestBtnText, { color: theme.textPrimary }]}>Continue as Guest</Text>
-            </TouchableOpacity>
           </View>
 
-        </ScrollView>
+          {/* Login Button */}
+          <TouchableOpacity
+            style={[styles.primaryBtn, { backgroundColor: theme.fitnessAccent }]}
+            onPress={handleLogin}
+          >
+            <Text style={styles.primaryBtnText}>Sign In</Text>
+          </TouchableOpacity>
+
+          <View style={styles.dividerRow}>
+            <View style={[styles.divider, { backgroundColor: theme.border }]} />
+            <Text style={[styles.dividerText, { color: theme.textSecondary }]}>OR</Text>
+            <View style={[styles.divider, { backgroundColor: theme.border }]} />
+          </View>
+
+          {/* Google OAuth Button */}
+          <TouchableOpacity
+            style={[styles.socialBtn, { borderColor: theme.border, backgroundColor: theme.cardBackground }]}
+            onPress={handleGoogleAuth}
+          >
+            <Ionicons name="logo-google" size={18} color="#EA4335" />
+            <Text style={[styles.socialBtnText, { color: theme.textPrimary }]}>Continue with Google</Text>
+          </TouchableOpacity>
+
+          {/* Guest Login */}
+          <TouchableOpacity
+            style={[styles.guestBtn, { borderColor: theme.border }]}
+            onPress={handleGuestLogin}
+          >
+            <Text style={[styles.guestBtnText, { color: theme.textSecondary }]}>Explore as Guest</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Footer Link */}
+        <View style={styles.footer}>
+          <Text style={{ color: theme.textSecondary }}>Don't have an account? </Text>
+          <TouchableOpacity onPress={() => router.replace('/auth/signup')}>
+            <Text style={[styles.signUpLink, { color: theme.fitnessAccent }]}>Sign Up</Text>
+          </TouchableOpacity>
+        </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -149,22 +155,61 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  scrollContent: { padding: 20, justifyContent: 'center', minHeight: '100%' },
-  headerBox: { marginBottom: 20, alignItems: 'center' },
-  iconBadge: { width: 48, height: 48, borderRadius: 24, borderWidth: 1, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
-  brandSubtitle: { fontSize: 11, fontWeight: '800', letterSpacing: 1.5, marginBottom: 4 },
-  brandTitle: { fontSize: 28, fontWeight: '800', marginBottom: 6 },
-  brandDescription: { fontSize: 13, textAlign: 'center', paddingHorizontal: 20 },
-  card: { padding: 20, borderRadius: 16, borderWidth: 1 },
-  googleBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 10, borderWidth: 1 },
-  googleBtnText: { fontWeight: '700', fontSize: 14 },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 16 },
-  dividerLine: { flex: 1, height: 1 },
-  dividerText: { marginHorizontal: 10, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
-  inputLabel: { fontSize: 11, fontWeight: '700', marginBottom: 6 },
-  input: { padding: 12, borderRadius: 8, fontSize: 14, fontWeight: '600' },
-  loginBtn: { paddingVertical: 14, borderRadius: 10, alignItems: 'center', marginTop: 18 },
-  loginBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
-  guestBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 10, borderWidth: 1 },
-  guestBtnText: { fontWeight: '700', fontSize: 14 },
+  keyboardView: { flex: 1, paddingHorizontal: 24, justifyContent: 'space-between', paddingVertical: 20 },
+  headerContainer: { marginTop: 10 },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  title: { fontSize: 28, fontWeight: '800', letterSpacing: -0.5 },
+  subtitle: { fontSize: 14, marginTop: 6, lineHeight: 20 },
+  formContainer: { gap: 16, marginVertical: 20 },
+  inputGroup: { gap: 6 },
+  label: { fontSize: 13, fontWeight: '700' },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    height: 48,
+  },
+  inputIcon: { marginRight: 10 },
+  input: { flex: 1, fontSize: 15 },
+  primaryBtn: {
+    height: 50,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  primaryBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 6 },
+  divider: { flex: 1, height: 1 },
+  dividerText: { fontSize: 11, fontWeight: '700' },
+  socialBtn: {
+    flexDirection: 'row',
+    height: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  socialBtnText: { fontWeight: '700', fontSize: 14 },
+  guestBtn: {
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guestBtnText: { fontWeight: '600', fontSize: 13 },
+  footer: { flexDirection: 'row', justifyContent: 'center', marginBottom: 10 },
+  signUpLink: { fontWeight: '800' },
 });

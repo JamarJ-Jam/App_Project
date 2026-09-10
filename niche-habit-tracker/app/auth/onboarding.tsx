@@ -77,7 +77,7 @@ export default function OnboardingScreen() {
     };
     await AsyncStorage.setItem(STORAGE_KEY_ONBOARDING_EFFICIENCY, JSON.stringify(efficiencyProfile));
 
-    router.replace('/(tabs)');
+    router.replace('/(tabs)/dashboard');
   };
 
   return (
