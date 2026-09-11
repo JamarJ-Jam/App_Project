@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -40,6 +40,16 @@ export default function EntrySplashScreen() {
         Animated.timing(cardTranslateY, { toValue: 0, duration: 400, useNativeDriver: true }),
       ]).start();
     });
+  };
+
+  const handleNavigateToSignUp = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    router.push('/auth/signup');
+  };
+
+  const handleNavigateToLogin = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.push('/auth/login');
   };
 
   return (
@@ -85,10 +95,7 @@ export default function EntrySplashScreen() {
           <View style={[styles.actionCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
             <TouchableOpacity
               style={[styles.primaryBtn, { backgroundColor: theme.fitnessAccent }]}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                router.push('/auth/signup');
-              }}
+              onPress={handleNavigateToSignUp}
             >
               <Text style={styles.primaryBtnText}>Get Started</Text>
               <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
@@ -96,10 +103,7 @@ export default function EntrySplashScreen() {
 
             <TouchableOpacity
               style={[styles.secondaryBtn, { borderColor: theme.border }]}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                router.push('/auth/login');
-              }}
+              onPress={handleNavigateToLogin}
             >
               <Text style={[styles.secondaryBtnText, { color: theme.textPrimary }]}>I already have an account</Text>
             </TouchableOpacity>
