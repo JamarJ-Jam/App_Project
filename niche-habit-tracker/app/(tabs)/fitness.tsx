@@ -51,7 +51,7 @@ const EXERCISE_LIBRARY: Record<CategoryType, Record<string, string[]>> = {
     'Bodyweight Cardio': ['Jumping Jacks', 'Burpees', 'Mountain Climbers', 'High Knees'],
   },
   Stretching: {
-    'Full Body Mobility': ['World\'s Greatest Stretch', 'Cat-Cow', 'Thoracic Rotations'],
+    'Full Body Mobility': ["World's Greatest Stretch", 'Cat-Cow', 'Thoracic Rotations'],
     'Upper Stretches': ['Doorway Chest Stretch', 'Cross-Body Shoulder Stretch', 'Tricep Stretch'],
     'Lower Stretches': ['Hamstring Stretch', 'Pigeon Pose', 'Couch Stretch (Quads)'],
     'Dynamic Warm-Up': ['Arm Circles', 'Leg Swings', 'Hip Openers'],
@@ -88,10 +88,18 @@ export default function FitnessScreen() {
       const savedBio = await AsyncStorage.getItem(STORAGE_KEY_BIOMETRICS);
       if (savedBio) {
         const parsed = JSON.parse(savedBio);
-        if (parsed.weightInput) setCurrentWeight(parsed.weightInput);
-        if (parsed.targetWeightInput) setTargetWeight(parsed.targetWeightInput);
-        if (parsed.heightCm) setHeightCm(parsed.heightCm);
-        if (parsed.unit) setUnit(parsed.unit);
+        if (parsed.currentWeight || parsed.weightInput) {
+          setCurrentWeight(parsed.currentWeight || parsed.weightInput);
+        }
+        if (parsed.targetWeight || parsed.targetWeightInput) {
+          setTargetWeight(parsed.targetWeight || parsed.targetWeightInput);
+        }
+        if (parsed.height || parsed.heightCm) {
+          setHeightCm(parsed.height || parsed.heightCm);
+        }
+        if (parsed.weightUnit || parsed.unit) {
+          setUnit(parsed.weightUnit || parsed.unit);
+        }
       }
     } catch (e) {
       console.log('Error loading biometrics on fitness tab:', e);
@@ -340,7 +348,7 @@ export default function FitnessScreen() {
 
             {/* Complete & Log Session Button */}
             <TouchableOpacity
-              style={[styles.completeSessionBtn, { backgroundColor: theme.primaryAccent }]}
+              style={[styles.completeSessionBtn, { backgroundColor: theme.fitnessAccent }]}
               onPress={logCompletedWorkout}
             >
               <Ionicons name="checkmark-done-circle-outline" size={20} color="#FFFFFF" style={{ marginRight: 6 }} />

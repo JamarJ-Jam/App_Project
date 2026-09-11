@@ -14,13 +14,11 @@ import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
 import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
-import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
 
 const { width } = Dimensions.get('window');
 
 export default function EntrySplashScreen() {
   const { theme = LightTheme } = useTheme() || {};
-  const { user } = useAuth(); // Change isAuthenticated to user
   const router = useRouter();
   const lottieRef = useRef<LottieView>(null);
 
@@ -30,41 +28,16 @@ export default function EntrySplashScreen() {
   const cardOpacity = useRef(new Animated.Value(0)).current;
   const cardTranslateY = useRef(new Animated.Value(40)).current;
 
-  useEffect(() => {
-    // Session Check: If user object exists, navigate to dashboard
-    if (user) {
-      router.replace('/(tabs)/dashboard');
-    }
-  }, [user]);
-
   const triggerUIEntrance = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-    // 1. Reveal Title Header
     Animated.parallel([
-      Animated.timing(titleOpacity, {
-        toValue: 1,
-        duration: 500,
-        useNativeDriver: true,
-      }),
-      Animated.spring(titleScale, {
-        toValue: 1,
-        friction: 6,
-        useNativeDriver: true,
-      }),
+      Animated.timing(titleOpacity, { toValue: 1, duration: 500, useNativeDriver: true }),
+      Animated.spring(titleScale, { toValue: 1, friction: 6, useNativeDriver: true }),
     ]).start(() => {
-      // 2. Reveal Auth Action Buttons
       Animated.parallel([
-        Animated.timing(cardOpacity, {
-          toValue: 1,
-          duration: 400,
-          useNativeDriver: true,
-        }),
-        Animated.timing(cardTranslateY, {
-          toValue: 0,
-          duration: 400,
-          useNativeDriver: true,
-        }),
+        Animated.timing(cardOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
+        Animated.timing(cardTranslateY, { toValue: 0, duration: 400, useNativeDriver: true }),
       ]).start();
     });
   };
@@ -158,12 +131,7 @@ const styles = StyleSheet.create({
   },
   lottie: { width: '100%', height: '100%' },
   cardContainer: { width: '100%' },
-  actionCard: {
-    padding: 20,
-    borderRadius: 16,
-    borderWidth: 1,
-    gap: 12,
-  },
+  actionCard: { padding: 20, borderRadius: 16, borderWidth: 1, gap: 12 },
   primaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',

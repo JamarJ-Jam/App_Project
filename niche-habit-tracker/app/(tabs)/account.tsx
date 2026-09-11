@@ -1,330 +1,389 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
   StyleSheet,
   Text,
   View,
-  SafeAreaView,
   ScrollView,
-  TextInput,
+  SafeAreaView,
   TouchableOpacity,
-  Alert,
+  TextInput,
   Switch,
+  Alert,
+  LayoutAnimation,
+  Platform,
+  UIManager,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect } from 'expo-router';
+import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
-import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
-import { STORAGE_KEY_BIOMETRICS } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/src/fitnessStorage';
-import { STORAGE_KEY_ONBOARDING_EFFICIENCY } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/app/auth/onboarding';
 import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
+import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
 
-const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+interface AccordionSectionProps {
+  title: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  isOpen: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+  theme: typeof LightTheme;
+}
+
+const AccordionSection = ({ title, icon, isOpen, onToggle, children, theme }: AccordionSectionProps) => (
+  <View style={[styles.accordionWrapper, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+    <TouchableOpacity
+      style={styles.accordionHeader}
+      onPress={() => {
+        Haptics.selectionAsync();
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        onToggle();
+      }}
+      activeOpacity={0.7}
+    >
+      <View style={styles.headerLeft}>
+        <View style={[styles.iconFrame, { backgroundColor: 'rgba(59, 130, 246, 0.1)' }]}>
+          <Ionicons name={icon} size={18} color={theme.fitnessAccent} />
+        </View>
+        <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>{title}</Text>
+      </View>
+      <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={18} color={theme.textSecondary} />
+    </TouchableOpacity>
+    {isOpen && <View style={[styles.accordionContent, { borderTopColor: theme.border }]}>{children}</View>}
+  </View>
+);
 
 export default function AccountScreen() {
-  const { theme = LightTheme, toggleTheme } = useTheme() || {};
+  const { theme = LightTheme, isDark, toggleTheme } = useTheme() || {};
   const { user, signOut } = useAuth();
+  const router = useRouter();
 
-  const [unit, setUnit] = useState<'lbs' | 'kg'>('lbs');
-  const [currentWeight, setCurrentWeight] = useState('168');
-  const [targetWeight, setTargetWeight] = useState('155');
-  const [heightCm, setHeightCm] = useState('175');
-  const [workoutFrequency, setWorkoutFrequency] = useState('4');
+  // Accordion States
+  const [openSection, setOpenSection] = useState<'subscription' | 'profile' | 'settings' | null>('subscription');
+  const [pushEnabled, setPushEnabled] = useState(true);
+  const [biometricsEnabled, setBiometricsEnabled] = useState(false);
 
-  const [isEmployed, setIsEmployed] = useState(true);
-  const [workLocation, setWorkLocation] = useState<'remote' | 'office' | 'hybrid'>('remote');
-  const [workStyle, setWorkStyle] = useState<'shift' | 'async'>('shift');
-  const [shiftStart, setShiftStart] = useState('09:00');
-  const [shiftEnd, setShiftEnd] = useState('17:00');
-  const [selectedShiftDays, setSelectedShiftDays] = useState<string[]>(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
+  // Editable Biometrics & Unit Selections
+  const [isEditingBiometrics, setIsEditingBiometrics] = useState(false);
+  const [weightUnit, setWeightUnit] = useState<'kg' | 'lbs'>('kg');
+  const [heightUnit, setHeightUnit] = useState<'cm' | 'ft'>('cm');
 
-  useFocusEffect(
-    useCallback(() => {
-      loadProfileData();
-    }, [])
-  );
+  const [age, setAge] = useState('28');
+  const [gender, setGender] = useState('Male');
+  const [height, setHeight] = useState('178');
+  const [currentWeight, setCurrentWeight] = useState('82');
+  const [targetWeight, setTargetWeight] = useState('78');
+  const [primaryGoal, setPrimaryGoal] = useState('Muscle Gain & Focus');
+  const [calories, setCalories] = useState('2450');
+  const [deepWork, setDeepWork] = useState('6.0');
 
-  const loadProfileData = async () => {
-    try {
-      const savedBio = await AsyncStorage.getItem(STORAGE_KEY_BIOMETRICS);
-      if (savedBio) {
-        const parsed = JSON.parse(savedBio);
-        if (parsed.unit) setUnit(parsed.unit);
-        if (parsed.weightInput) setCurrentWeight(parsed.weightInput);
-        if (parsed.targetWeightInput) setTargetWeight(parsed.targetWeightInput);
-        if (parsed.heightCm) setHeightCm(parsed.heightCm);
-        if (parsed.workoutFrequency) setWorkoutFrequency(parsed.workoutFrequency);
-      }
-
-      const savedEff = await AsyncStorage.getItem(STORAGE_KEY_ONBOARDING_EFFICIENCY);
-      if (savedEff) {
-        const parsedEff = JSON.parse(savedEff);
-        setIsEmployed(parsedEff.isEmployed ?? true);
-        if (parsedEff.workLocation) setWorkLocation(parsedEff.workLocation);
-        if (parsedEff.workStyle) setWorkStyle(parsedEff.workStyle);
-        if (parsedEff.shiftStart) setShiftStart(parsedEff.shiftStart);
-        if (parsedEff.shiftEnd) setShiftEnd(parsedEff.shiftEnd);
-        if (parsedEff.selectedShiftDays) setSelectedShiftDays(parsedEff.selectedShiftDays);
-      }
-    } catch (e) {
-      console.log('Error loading account settings:', e);
-    }
+  const toggleAccordion = (section: 'subscription' | 'profile' | 'settings') => {
+    setOpenSection(openSection === section ? null : section);
   };
 
-  const saveProfileData = async () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  const handleToggleBiometrics = async (value: boolean) => {
+    if (value) {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
 
-    const biometricsData = {
-      unit,
-      weightInput: currentWeight,
-      heightCm,
-      targetWeightInput: targetWeight,
-      workoutFrequency,
-    };
-    await AsyncStorage.setItem(STORAGE_KEY_BIOMETRICS, JSON.stringify(biometricsData));
+      if (!hasHardware || !isEnrolled) {
+        Alert.alert('Biometrics Unavailable', 'Your device does not have fingerprint or FaceID security configured.');
+        return;
+      }
 
-    const efficiencyProfile = {
-      isEmployed,
-      workLocation,
-      workStyle,
-      shiftStart,
-      shiftEnd,
-      selectedShiftDays,
-      isOnboarded: true,
-    };
-    await AsyncStorage.setItem(STORAGE_KEY_ONBOARDING_EFFICIENCY, JSON.stringify(efficiencyProfile));
+      const res = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Authenticate to enable Fingerprint Sign-In',
+      });
 
-    Alert.alert('Settings Updated', 'Your biometrics and shift preferences are synchronized.');
-  };
-
-  const toggleDaySelection = (day: string) => {
-    Haptics.selectionAsync();
-    if (selectedShiftDays.includes(day)) {
-      setSelectedShiftDays(selectedShiftDays.filter((d) => d !== day));
+      if (res.success) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setBiometricsEnabled(true);
+        Alert.alert('Biometrics Enabled', 'You can now sign in using your fingerprint.');
+      }
     } else {
-      setSelectedShiftDays([...selectedShiftDays, day]);
+      setBiometricsEnabled(false);
     }
+  };
+
+  const handleSaveBiometrics = () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setIsEditingBiometrics(false);
+    Alert.alert('Profile Updated', 'Your biometrics and preferred measurement units have been saved.');
+  };
+
+  const handleSignOut = () => {
+    Alert.alert('Sign Out', 'Are you sure you want to log out of My Chawgee?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign Out',
+        style: 'destructive',
+        onPress: async () => {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          if (signOut) await signOut();
+          router.replace('/auth/login');
+        },
+      },
+    ]);
   };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         
-        {/* Header */}
-        <View style={styles.headerRow}>
-          <View>
-            <Text style={[styles.headerSubtitle, { color: theme.fitnessAccent }]}>ACCOUNT & PROFILE</Text>
-            <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>Preferences</Text>
+        {/* User Profile Header */}
+        <View style={[styles.profileCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+          <View style={[styles.avatar, { backgroundColor: theme.fitnessAccent }]}>
+            <Text style={styles.avatarText}>{user?.email ? user.email[0].toUpperCase() : 'A'}</Text>
           </View>
-          <View style={styles.themeToggleRow}>
-            <Ionicons name={theme.isDark ? 'moon' : 'sunny'} size={18} color={theme.textPrimary} />
-            <Switch
-              value={theme.isDark}
-              onValueChange={toggleTheme}
-              trackColor={{ false: '#CBD5E1', true: '#334155' }}
-              thumbColor={theme.isDark ? '#3B82F6' : '#FFFFFF'}
-            />
+          <View style={styles.profileMeta}>
+            <Text style={[styles.userName, { color: theme.textPrimary }]}>{user?.email?.split('@')[0] || 'Accountability Member'}</Text>
+            <Text style={[styles.userEmail, { color: theme.textSecondary }]}>{user?.email || 'guest@mychawgee.app'}</Text>
           </View>
         </View>
 
-        {/* User Card */}
-        <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.border, marginBottom: 16 }]}>
-          <View style={styles.userCardRow}>
-            <View style={[styles.avatarCircle, { backgroundColor: theme.primaryAccent }]}>
-              <Text style={styles.avatarText}>
-                {user?.name ? user.name[0].toUpperCase() : user?.email ? user.email[0].toUpperCase() : 'G'}
-              </Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.userName, { color: theme.textPrimary }]}>
-                {user?.name || (user?.isGuest ? 'Guest User' : user?.email?.split('@')[0])}
-              </Text>
-              <Text style={[styles.userEmail, { color: theme.textSecondary }]}>
-                {user?.email || 'Guest Mode'}
-              </Text>
-            </View>
-            <TouchableOpacity style={[styles.signOutBtn, { borderColor: theme.border }]} onPress={signOut}>
-              <Ionicons name="log-out-outline" size={16} color="#EF4444" style={{ marginRight: 4 }} />
-              <Text style={{ color: '#EF4444', fontWeight: '700', fontSize: 12 }}>Log Out</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Fitness & Biometrics Section */}
-        <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.border, marginBottom: 16 }]}>
-          <View style={styles.cardHeaderRow}>
-            <Ionicons name="fitness-outline" size={18} color={theme.fitnessAccent} />
-            <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>Biometrics & Baseline</Text>
-          </View>
-
-          <View style={styles.unitRow}>
-            <Text style={[styles.label, { color: theme.textSecondary }]}>Weight Measurement</Text>
-            <View style={{ flexDirection: 'row', gap: 6 }}>
-              {['lbs', 'kg'].map((u) => (
-                <TouchableOpacity
-                  key={u}
-                  style={[
-                    styles.unitBtn,
-                    { backgroundColor: unit === u ? theme.fitnessAccent : theme.isDark ? '#2A2A2A' : '#E2E8F0' },
-                  ]}
-                  onPress={() => setUnit(u as any)}
-                >
-                  <Text style={{ color: unit === u ? '#FFF' : theme.textPrimary, fontWeight: '700', fontSize: 12 }}>{u}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          <View style={styles.gridRow}>
-            <View style={{ width: '48%' }}>
-              <Text style={[styles.label, { color: theme.textSecondary }]}>Current Weight ({unit})</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-                keyboardType="numeric"
-                value={currentWeight}
-                onChangeText={setCurrentWeight}
-              />
-            </View>
-            <View style={{ width: '48%' }}>
-              <Text style={[styles.label, { color: theme.textSecondary }]}>Target Weight ({unit})</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-                keyboardType="numeric"
-                value={targetWeight}
-                onChangeText={setTargetWeight}
-              />
-            </View>
-          </View>
-
-          <View style={styles.gridRow}>
-            <View style={{ width: '48%' }}>
-              <Text style={[styles.label, { color: theme.textSecondary }]}>Height (cm)</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-                keyboardType="numeric"
-                value={heightCm}
-                onChangeText={setHeightCm}
-              />
-            </View>
-            <View style={{ width: '48%' }}>
-              <Text style={[styles.label, { color: theme.textSecondary }]}>Weekly Target</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-                keyboardType="numeric"
-                value={workoutFrequency}
-                onChangeText={setWorkoutFrequency}
-              />
-            </View>
-          </View>
-        </View>
-
-        {/* Employment & Shift Section */}
-        <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.border, marginBottom: 20 }]}>
-          <View style={styles.cardHeaderRow}>
-            <Ionicons name="briefcase-outline" size={18} color={theme.primaryAccent} />
-            <Text style={[styles.sectionTitle, { color: theme.textPrimary }]}>Workplace & Shift Schedule</Text>
-          </View>
-
-          <Text style={[styles.label, { color: theme.textSecondary }]}>Employment Status</Text>
-          <View style={styles.gridRow}>
-            <TouchableOpacity
-              style={[styles.optionChip, { backgroundColor: isEmployed ? theme.primaryAccent : theme.isDark ? '#2A2A2A' : '#F1F5F9', width: '48%' }]}
-              onPress={() => setIsEmployed(true)}
-            >
-              <Text style={{ color: isEmployed ? '#FFF' : theme.textPrimary, fontWeight: '700', fontSize: 12 }}>Employed</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.optionChip, { backgroundColor: !isEmployed ? theme.primaryAccent : theme.isDark ? '#2A2A2A' : '#F1F5F9', width: '48%' }]}
-              onPress={() => setIsEmployed(false)}
-            >
-              <Text style={{ color: !isEmployed ? '#FFF' : theme.textPrimary, fontWeight: '700', fontSize: 12 }}>Student / Flexible</Text>
-            </TouchableOpacity>
-          </View>
-
-          {isEmployed && (
-            <>
-              <Text style={[styles.label, { color: theme.textSecondary, marginTop: 12 }]}>Location Type</Text>
-              <View style={styles.gridRow}>
-                {[
-                  { id: 'remote', label: 'Remote' },
-                  { id: 'office', label: 'In-Office' },
-                  { id: 'hybrid', label: 'Hybrid' },
-                ].map((loc) => (
-                  <TouchableOpacity
-                    key={loc.id}
-                    style={[styles.optionChip, { backgroundColor: workLocation === loc.id ? theme.primaryAccent : theme.isDark ? '#2A2A2A' : '#F1F5F9', width: '31%' }]}
-                    onPress={() => setWorkLocation(loc.id as any)}
-                  >
-                    <Text style={{ color: workLocation === loc.id ? '#FFF' : theme.textPrimary, fontWeight: '700', fontSize: 11 }}>{loc.label}</Text>
-                  </TouchableOpacity>
-                ))}
+        {/* 1. Subscription Hub Accordion */}
+        <AccordionSection
+          title="Subscription & Membership"
+          icon="card-outline"
+          isOpen={openSection === 'subscription'}
+          onToggle={() => toggleAccordion('subscription')}
+          theme={theme}
+        >
+          <View style={styles.planCard}>
+            <View style={styles.planHeader}>
+              <View>
+                <Text style={[styles.planTitle, { color: theme.textPrimary }]}>Pro Accountability Pass</Text>
+                <Text style={[styles.planPrice, { color: theme.fitnessAccent }]}>$9.99 / month</Text>
               </View>
+              <Text style={styles.activePill}>ACTIVE</Text>
+            </View>
+            <Text style={[styles.planDesc, { color: theme.textSecondary }]}>
+              Renews on Oct 14, 2026. Includes AI Chawgee Mascot Briefings, Unlimited Fitness Triggers, and Analytics Sync.
+            </Text>
+            <TouchableOpacity
+              style={[styles.actionBtn, { borderColor: theme.border }]}
+              onPress={() => Alert.alert('Manage Plan', 'Redirecting to App Store Subscription Settings...')}
+            >
+              <Text style={[styles.actionBtnText, { color: theme.textPrimary }]}>Manage Billing & Plans</Text>
+            </TouchableOpacity>
+          </View>
+        </AccordionSection>
 
-              <Text style={[styles.label, { color: theme.textSecondary, marginTop: 12 }]}>Work Style</Text>
-              <View style={styles.gridRow}>
-                <TouchableOpacity
-                  style={[styles.optionChip, { backgroundColor: workStyle === 'shift' ? theme.primaryAccent : theme.isDark ? '#2A2A2A' : '#F1F5F9', width: '48%' }]}
-                  onPress={() => setWorkStyle('shift')}
-                >
-                  <Text style={{ color: workStyle === 'shift' ? '#FFF' : theme.textPrimary, fontWeight: '700', fontSize: 12 }}>Fixed Shift</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.optionChip, { backgroundColor: workStyle === 'async' ? theme.primaryAccent : theme.isDark ? '#2A2A2A' : '#F1F5F9', width: '48%' }]}
-                  onPress={() => setWorkStyle('async')}
-                >
-                  <Text style={{ color: workStyle === 'async' ? '#FFF' : theme.textPrimary, fontWeight: '700', fontSize: 12 }}>Asynchronous</Text>
-                </TouchableOpacity>
-              </View>
+        {/* 2. Biometrics & Onboarding Profile Accordion */}
+        <AccordionSection
+          title="Profile & Biometrics"
+          icon="person-outline"
+          isOpen={openSection === 'profile'}
+          onToggle={() => toggleAccordion('profile')}
+          theme={theme}
+        >
+          <View style={styles.sectionHeaderRow}>
+            <Text style={[styles.subHeading, { color: theme.textSecondary }]}>ONBOARDING BIOMETRICS</Text>
+            <TouchableOpacity
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                if (isEditingBiometrics) {
+                  handleSaveBiometrics();
+                } else {
+                  setIsEditingBiometrics(true);
+                }
+              }}
+            >
+              <Text style={[styles.editToggleText, { color: theme.fitnessAccent }]}>
+                {isEditingBiometrics ? 'Save' : 'Edit'}
+              </Text>
+            </TouchableOpacity>
+          </View>
 
-              {workStyle === 'shift' && (
-                <View style={{ marginTop: 12 }}>
-                  <Text style={[styles.label, { color: theme.textSecondary }]}>Shift Hours</Text>
-                  <View style={styles.gridRow}>
-                    <View style={{ width: '48%' }}>
-                      <Text style={[styles.subLabel, { color: theme.textSecondary }]}>Start Time</Text>
-                      <TextInput
-                        style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-                        value={shiftStart}
-                        onChangeText={setShiftStart}
-                      />
-                    </View>
-                    <View style={{ width: '48%' }}>
-                      <Text style={[styles.subLabel, { color: theme.textSecondary }]}>End Time</Text>
-                      <TextInput
-                        style={[styles.input, { backgroundColor: theme.isDark ? '#2A2A2A' : '#F1F5F9', color: theme.textPrimary }]}
-                        value={shiftEnd}
-                        onChangeText={setShiftEnd}
-                      />
-                    </View>
-                  </View>
-
-                  <Text style={[styles.label, { color: theme.textSecondary, marginTop: 12 }]}>Active Working Days</Text>
-                  <View style={styles.daysRow}>
-                    {DAYS.map((day) => {
-                      const isSelected = selectedShiftDays.includes(day);
-                      return (
-                        <TouchableOpacity
-                          key={day}
-                          style={[
-                            styles.dayChip,
-                            { backgroundColor: isSelected ? theme.primaryAccent : theme.isDark ? '#2A2A2A' : '#E2E8F0' },
-                          ]}
-                          onPress={() => toggleDaySelection(day)}
-                        >
-                          <Text style={{ color: isSelected ? '#FFF' : theme.textPrimary, fontWeight: '700', fontSize: 11 }}>{day}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
+          {/* Unit Toggle Selectors */}
+          {isEditingBiometrics && (
+            <View style={[styles.unitToggleCard, { borderColor: theme.border, backgroundColor: theme.background }]}>
+              <View style={styles.unitRow}>
+                <Text style={[styles.unitRowLabel, { color: theme.textSecondary }]}>Height Units</Text>
+                <View style={styles.unitSelectorContainer}>
+                  {(['cm', 'ft'] as const).map((unit) => (
+                    <TouchableOpacity
+                      key={unit}
+                      style={[styles.unitPill, heightUnit === unit && { backgroundColor: theme.fitnessAccent }]}
+                      onPress={() => {
+                        Haptics.selectionAsync();
+                        setHeightUnit(unit);
+                      }}
+                    >
+                      <Text style={[styles.unitPillText, { color: heightUnit === unit ? '#FFFFFF' : theme.textSecondary }]}>
+                        {unit.toUpperCase()}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
                 </View>
-              )}
-            </>
-          )}
-        </View>
+              </View>
 
-        <TouchableOpacity style={[styles.saveBtn, { backgroundColor: theme.fitnessAccent }]} onPress={saveProfileData}>
-          <Text style={styles.saveBtnText}>Save Preferences</Text>
+              <View style={styles.unitRow}>
+                <Text style={[styles.unitRowLabel, { color: theme.textSecondary }]}>Weight Units</Text>
+                <View style={styles.unitSelectorContainer}>
+                  {(['kg', 'lbs'] as const).map((unit) => (
+                    <TouchableOpacity
+                      key={unit}
+                      style={[styles.unitPill, weightUnit === unit && { backgroundColor: theme.fitnessAccent }]}
+                      onPress={() => {
+                        Haptics.selectionAsync();
+                        setWeightUnit(unit);
+                      }}
+                    >
+                      <Text style={[styles.unitPillText, { color: weightUnit === unit ? '#FFFFFF' : theme.textSecondary }]}>
+                        {unit.toUpperCase()}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </View>
+          )}
+
+          {/* Age */}
+          <View style={styles.infoRow}>
+            <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>Age</Text>
+            {isEditingBiometrics ? (
+              <View style={[styles.editInputWrapper, { borderColor: theme.border, backgroundColor: theme.background }]}>
+                <TextInput style={[styles.editInput, { color: theme.textPrimary }]} value={age} onChangeText={setAge} keyboardType="numeric" />
+                <Text style={[styles.unitText, { color: theme.textSecondary }]}>yrs</Text>
+              </View>
+            ) : (
+              <Text style={[styles.infoValue, { color: theme.textPrimary }]}>{age} yrs</Text>
+            )}
+          </View>
+
+          {/* Gender */}
+          <View style={styles.infoRow}>
+            <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>Gender</Text>
+            {isEditingBiometrics ? (
+              <View style={[styles.editInputWrapper, { borderColor: theme.border, backgroundColor: theme.background }]}>
+                <TextInput style={[styles.editInput, { color: theme.textPrimary }]} value={gender} onChangeText={setGender} />
+              </View>
+            ) : (
+              <Text style={[styles.infoValue, { color: theme.textPrimary }]}>{gender}</Text>
+            )}
+          </View>
+
+          {/* Height */}
+          <View style={styles.infoRow}>
+            <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>Height</Text>
+            {isEditingBiometrics ? (
+              <View style={[styles.editInputWrapper, { borderColor: theme.border, backgroundColor: theme.background }]}>
+                <TextInput style={[styles.editInput, { color: theme.textPrimary }]} value={height} onChangeText={setHeight} keyboardType="numeric" />
+                <Text style={[styles.unitText, { color: theme.textSecondary }]}>{heightUnit}</Text>
+              </View>
+            ) : (
+              <Text style={[styles.infoValue, { color: theme.textPrimary }]}>{height} {heightUnit}</Text>
+            )}
+          </View>
+
+          {/* Current Weight */}
+          <View style={styles.infoRow}>
+            <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>Current Weight</Text>
+            {isEditingBiometrics ? (
+              <View style={[styles.editInputWrapper, { borderColor: theme.border, backgroundColor: theme.background }]}>
+                <TextInput style={[styles.editInput, { color: theme.textPrimary }]} value={currentWeight} onChangeText={setCurrentWeight} keyboardType="numeric" />
+                <Text style={[styles.unitText, { color: theme.textSecondary }]}>{weightUnit}</Text>
+              </View>
+            ) : (
+              <Text style={[styles.infoValue, { color: theme.textPrimary }]}>{currentWeight} {weightUnit}</Text>
+            )}
+          </View>
+
+          {/* Target Weight */}
+          <View style={styles.infoRow}>
+            <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>Target Weight</Text>
+            {isEditingBiometrics ? (
+              <View style={[styles.editInputWrapper, { borderColor: theme.border, backgroundColor: theme.background }]}>
+                <TextInput style={[styles.editInput, { color: theme.textPrimary }]} value={targetWeight} onChangeText={setTargetWeight} keyboardType="numeric" />
+                <Text style={[styles.unitText, { color: theme.textSecondary }]}>{weightUnit}</Text>
+              </View>
+            ) : (
+              <Text style={[styles.infoValue, { color: theme.textPrimary }]}>{targetWeight} {weightUnit}</Text>
+            )}
+          </View>
+
+          {/* Primary Goal */}
+          <View style={styles.infoRow}>
+            <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>Primary Focus</Text>
+            {isEditingBiometrics ? (
+              <View style={[styles.editInputWrapper, { borderColor: theme.border, backgroundColor: theme.background }]}>
+                <TextInput style={[styles.editInput, { color: theme.textPrimary }]} value={primaryGoal} onChangeText={setPrimaryGoal} />
+              </View>
+            ) : (
+              <Text style={[styles.infoValue, { color: theme.textPrimary }]}>{primaryGoal}</Text>
+            )}
+          </View>
+
+          <View style={[styles.divider, { backgroundColor: theme.border, marginVertical: 4 }]} />
+          <Text style={[styles.subHeading, { color: theme.textSecondary, marginBottom: 2 }]}>DAILY TARGETS</Text>
+
+          {/* Calorie Target */}
+          <View style={styles.infoRow}>
+            <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>Daily Calorie Target</Text>
+            {isEditingBiometrics ? (
+              <View style={[styles.editInputWrapper, { borderColor: theme.border, backgroundColor: theme.background }]}>
+                <TextInput style={[styles.editInput, { color: theme.textPrimary }]} value={calories} onChangeText={setCalories} keyboardType="numeric" />
+                <Text style={[styles.unitText, { color: theme.textSecondary }]}>kcal</Text>
+              </View>
+            ) : (
+              <Text style={[styles.infoValue, { color: theme.textPrimary }]}>{calories} kcal</Text>
+            )}
+          </View>
+
+          {/* Deep Work */}
+          <View style={styles.infoRow}>
+            <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>Deep Work Goal</Text>
+            {isEditingBiometrics ? (
+              <View style={[styles.editInputWrapper, { borderColor: theme.border, backgroundColor: theme.background }]}>
+                <TextInput style={[styles.editInput, { color: theme.textPrimary }]} value={deepWork} onChangeText={setDeepWork} keyboardType="numeric" />
+                <Text style={[styles.unitText, { color: theme.textSecondary }]}>hrs</Text>
+              </View>
+            ) : (
+              <Text style={[styles.infoValue, { color: theme.textPrimary }]}>{deepWork} hrs / day</Text>
+            )}
+          </View>
+        </AccordionSection>
+
+        {/* 3. Settings & Security Accordion */}
+        <AccordionSection
+          title="Settings & Security"
+          icon="settings-outline"
+          isOpen={openSection === 'settings'}
+          onToggle={() => toggleAccordion('settings')}
+          theme={theme}
+        >
+          <View style={styles.toggleRow}>
+            <Text style={[styles.toggleLabel, { color: theme.textPrimary }]}>Dark Mode</Text>
+            <Switch value={isDark} onValueChange={toggleTheme} />
+          </View>
+          <View style={styles.toggleRow}>
+            <Text style={[styles.toggleLabel, { color: theme.textPrimary }]}>Daily Goal Reminders</Text>
+            <Switch value={pushEnabled} onValueChange={setPushEnabled} />
+          </View>
+
+          {/* Fingerprint / Biometric Toggle */}
+          <View style={styles.toggleRow}>
+            <View style={{ flex: 1, paddingRight: 8 }}>
+              <Text style={[styles.toggleLabel, { color: theme.textPrimary }]}>Fingerprint / Biometric Login</Text>
+              <Text style={[styles.toggleSubText, { color: theme.textSecondary }]}>Require fingerprint or FaceID when launching app</Text>
+            </View>
+            <Switch value={biometricsEnabled} onValueChange={handleToggleBiometrics} />
+          </View>
+        </AccordionSection>
+
+        {/* Sign Out Button */}
+        <TouchableOpacity
+          style={[styles.signOutBtn, { borderColor: theme.border, backgroundColor: theme.cardBackground }]}
+          onPress={handleSignOut}
+        >
+          <Ionicons name="log-out-outline" size={18} color="#EF4444" />
+          <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
 
       </ScrollView>
@@ -334,29 +393,53 @@ export default function AccountScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  scrollContent: { padding: 20 },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  headerSubtitle: { fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  headerTitle: { fontSize: 26, fontWeight: '800' },
-  themeToggleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  card: { padding: 18, borderRadius: 14, borderWidth: 1 },
-  userCardRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  avatarCircle: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
-  avatarText: { color: '#FFF', fontWeight: '800', fontSize: 18 },
-  userName: { fontSize: 16, fontWeight: '700' },
-  userEmail: { fontSize: 12 },
-  signOutBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1 },
-  cardHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
-  sectionTitle: { fontSize: 15, fontWeight: '700' },
-  unitRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  unitBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 },
-  label: { fontSize: 12, fontWeight: '600', marginBottom: 6 },
-  subLabel: { fontSize: 11, fontWeight: '600', marginBottom: 4 },
-  gridRow: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
-  optionChip: { paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center' },
-  input: { padding: 10, borderRadius: 8, fontSize: 14, fontWeight: '700' },
-  daysRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
-  dayChip: { flex: 1, paddingVertical: 8, borderRadius: 6, alignItems: 'center', marginHorizontal: 2 },
-  saveBtn: { paddingVertical: 14, borderRadius: 10, alignItems: 'center' },
-  saveBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15 },
+  scrollContent: { paddingHorizontal: 20, paddingVertical: 20, gap: 14 },
+  profileCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 12,
+  },
+  avatar: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center' },
+  avatarText: { color: '#FFFFFF', fontSize: 18, fontWeight: '800' },
+  profileMeta: { flex: 1 },
+  userName: { fontSize: 16, fontWeight: '800' },
+  userEmail: { fontSize: 12, marginTop: 2 },
+  accordionWrapper: { borderRadius: 16, borderWidth: 1, overflow: 'hidden' },
+  accordionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  iconFrame: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: 15, fontWeight: '700' },
+  accordionContent: { padding: 16, borderTopWidth: 1, gap: 12 },
+  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 },
+  subHeading: { fontSize: 11, fontWeight: '800', letterSpacing: 1 },
+  editToggleText: { fontSize: 13, fontWeight: '800' },
+  unitToggleCard: { padding: 12, borderRadius: 12, borderWidth: 1, gap: 10, marginBottom: 4 },
+  unitRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  unitRowLabel: { fontSize: 12, fontWeight: '700' },
+  unitSelectorContainer: { flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.05)', borderRadius: 8, padding: 2, gap: 2 },
+  unitPill: { paddingVertical: 4, paddingHorizontal: 12, borderRadius: 6 },
+  unitPillText: { fontSize: 11, fontWeight: '800' },
+  planCard: { gap: 10 },
+  planHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  planTitle: { fontSize: 15, fontWeight: '800' },
+  planPrice: { fontSize: 13, fontWeight: '700', marginTop: 2 },
+  activePill: { color: '#10B981', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  planDesc: { fontSize: 12, lineHeight: 18 },
+  actionBtn: { paddingVertical: 10, borderRadius: 10, borderWidth: 1, alignItems: 'center', marginTop: 4 },
+  actionBtnText: { fontSize: 12, fontWeight: '700' },
+  infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  infoLabel: { fontSize: 13, fontWeight: '600' },
+  infoValue: { fontSize: 13, fontWeight: '800' },
+  editInputWrapper: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, gap: 4 },
+  editInput: { fontSize: 13, fontWeight: '800', minWidth: 45, textAlign: 'right', padding: 0 },
+  unitText: { fontSize: 12, fontWeight: '600' },
+  divider: { height: 1, width: '100%' },
+  toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  toggleLabel: { fontSize: 13, fontWeight: '600' },
+  toggleSubText: { fontSize: 11, marginTop: 2 },
+  signOutBtn: { flexDirection: 'row', height: 48, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 10 },
+  signOutText: { color: '#EF4444', fontWeight: '800', fontSize: 14 },
 });
