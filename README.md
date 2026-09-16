@@ -107,3 +107,7 @@ Chawgee is currently being developed using:
 The application uses a separate AI backend responsible for processing user context, communicating with language models, and coordinating Chawgee's AI capabilities.
 
 ## Project Structure
+
+App_Project/
+├── niche-habit-tracker/      # React Native / Expo application
+└── chawgee-ai-backend/       # Chawgee AI and API backend
