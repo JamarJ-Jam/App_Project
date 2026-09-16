@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface User {
+  id: string;
   email: string;
   name?: string;
   isGuest: boolean;
@@ -15,6 +16,7 @@ interface AuthContextType {
   signUp: (email: string, name?: string) => Promise<void>;
   signInWithGoogle: (email: string, name: string) => Promise<void>;
   signInAsGuest: () => Promise<void>;
+  updateAccountIdentity: (email: string, name?: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -25,6 +27,7 @@ const AuthContext = createContext<AuthContextType>({
   signUp: async () => {},
   signInWithGoogle: async () => {},
   signInAsGuest: async () => {},
+  updateAccountIdentity: async () => {},
   signOut: async () => {},
 });
 
@@ -43,28 +46,67 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, []);
 
-  const signIn = async (email: string) => {
-    const sessionData: User = { email, isGuest: false, provider: 'email' };
+  const persistSession = async (sessionData: User) => {
     setUser(sessionData);
     await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionData));
+  };
+
+  const signIn = async (email: string) => {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    await persistSession({
+      id: `email:${normalizedEmail}`,
+      email: normalizedEmail,
+      isGuest: false,
+      provider: 'email',
+    });
   };
 
   const signUp = async (email: string, name?: string) => {
-    const sessionData: User = { email, name, isGuest: false, provider: 'email' };
-    setUser(sessionData);
-    await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionData));
+    const normalizedEmail = email.trim().toLowerCase();
+
+    await persistSession({
+      id: `email:${normalizedEmail}`,
+      email: normalizedEmail,
+      name: name?.trim() || undefined,
+      isGuest: false,
+      provider: 'email',
+    });
   };
 
   const signInWithGoogle = async (email: string, name: string) => {
-    const sessionData: User = { email, name, isGuest: false, provider: 'google' };
-    setUser(sessionData);
-    await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionData));
+    const normalizedEmail = email.trim().toLowerCase();
+
+    await persistSession({
+      id: `google:${normalizedEmail}`,
+      email: normalizedEmail,
+      name: name.trim(),
+      isGuest: false,
+      provider: 'google',
+    });
   };
 
   const signInAsGuest = async () => {
-    const sessionData: User = { email: 'Guest User', name: 'Guest', isGuest: true };
-    setUser(sessionData);
-    await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionData));
+    await persistSession({
+      id: `guest:${Date.now()}`,
+      email: 'Guest User',
+      name: 'Guest',
+      isGuest: true,
+    });
+  };
+
+  const updateAccountIdentity = async (email: string, name?: string) => {
+    if (!user || user.isGuest) return;
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Keep the original stable ID so user-scoped Fitness/Nutrition/Efficiency
+    // storage does not become orphaned when an email address changes.
+    await persistSession({
+      ...user,
+      email: normalizedEmail,
+      name: name?.trim() || undefined,
+    });
   };
 
   const signOut = async () => {
@@ -73,7 +115,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, signIn, signUp, signInWithGoogle, signInAsGuest, signOut }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        isLoading,
+        signIn,
+        signUp,
+        signInWithGoogle,
+        signInAsGuest,
+        updateAccountIdentity,
+        signOut,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
