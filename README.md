@@ -112,3 +112,25 @@ The application uses a separate AI backend responsible for processing user conte
 App_Project/
 ├── niche-habit-tracker/      # React Native / Expo application
 └── chawgee-ai-backend/       # Chawgee AI and API backend
+
+The frontend originated as a niche habit-tracking project and is actively being transformed into the broader Chawgee platform.
+
+Current Development Status
+
+Chawgee is currently under active development.
+
+Core application architecture, user profiles, authentication, theming, fitness tracking, personalized onboarding, dashboard functionality, and the initial Chawgee AI backend have been implemented.
+
+Current development is focused on expanding productivity and efficiency functionality, strengthening the connection between application data and Chawgee's reasoning system, and preparing the platform for deeper calendar-based intelligence.
+
+Vision
+
+Chawgee is being built around a simple idea:
+
+Your goals should not live separately from the reality of your day.
+
+The aim is to create an assistant that understands what you want to accomplish, understands the time and resources available to you, observes your progress, and helps you continuously adjust.
+
+Instead of simply recording what happened, Chawgee is designed to help determine what should happen next.
+
+Chawgee — Turn your goals into action.
