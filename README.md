@@ -108,6 +108,7 @@ The application uses a separate AI backend responsible for processing user conte
 
 ## Project Structure
 
+```text
 App_Project/
 ├── niche-habit-tracker/      # React Native / Expo application
 └── chawgee-ai-backend/       # Chawgee AI and API backend
