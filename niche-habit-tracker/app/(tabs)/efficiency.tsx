@@ -37,6 +37,7 @@ import {
   startDeepWorkSession,
   stopDeepWorkSession,
 } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/deepWorkStorage';
+import { cancelStoredTaskNotifications } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/services/taskNotificationService';
 import {
   CalendarEventContext,
   getCalendarEventContext,
@@ -146,6 +147,10 @@ export default function EfficiencyScreen() {
   const [newTaskNotes, setNewTaskNotes] = useState('');
   const [timePickerVisible, setTimePickerVisible] = useState(false);
   const [timePickerTarget, setTimePickerTarget] = useState<'start' | 'end'>('start');
+  const [exactTimeMode, setExactTimeMode] = useState(false);
+  const [exactHour, setExactHour] = useState(12);
+  const [exactMinute, setExactMinute] = useState(0);
+  const [exactPeriod, setExactPeriod] = useState<'AM' | 'PM'>('AM');
   const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [datePickerMonth, setDatePickerMonth] = useState(() => {
     const today = new Date();
@@ -252,6 +257,9 @@ export default function EfficiencyScreen() {
     } : item));
     try {
       await setTaskCompleted(id, completed);
+      if (completed) {
+        await cancelStoredTaskNotifications(id);
+      }
     } catch (error) {
       console.error('Failed to update task:', error);
       await loadEfficiencyData();
@@ -261,7 +269,39 @@ export default function EfficiencyScreen() {
 
   const openTimePicker = (target: 'start' | 'end') => {
     setTimePickerTarget(target);
+    setExactTimeMode(false);
     setTimePickerVisible(true);
+  };
+
+  const prepareExactTime = () => {
+    const value =
+      timePickerTarget === 'start'
+        ? newTaskStartTime
+        : newTaskEndTime;
+    const [hourString, minuteString] = (value || '12:00').split(':');
+    const hour24 = Number(hourString);
+    const minute = Number(minuteString);
+    const validHour = Number.isInteger(hour24) && hour24 >= 0 && hour24 <= 23
+      ? hour24
+      : 12;
+    const validMinute = Number.isInteger(minute) && minute >= 0 && minute <= 59
+      ? minute
+      : 0;
+
+    setExactHour(validHour % 12 || 12);
+    setExactMinute(validMinute);
+    setExactPeriod(validHour >= 12 ? 'PM' : 'AM');
+    setExactTimeMode(true);
+  };
+
+  const applyExactTime = () => {
+    let hour24 = exactHour % 12;
+    if (exactPeriod === 'PM') hour24 += 12;
+
+    const time = `${String(hour24).padStart(2, '0')}:${String(
+      exactMinute
+    ).padStart(2, '0')}`;
+    selectTaskTime(time);
   };
 
   const selectTaskTime = (time: string) => {
@@ -647,6 +687,7 @@ export default function EfficiencyScreen() {
     setTasks((current) => current.filter((task) => task.id !== id));
 
     try {
+      await cancelStoredTaskNotifications(id);
       await deleteStoredTask(id);
     } catch (error) {
       console.error('Failed to delete task:', error);
@@ -2233,7 +2274,9 @@ export default function EfficiencyScreen() {
                     { color: theme.textSecondary },
                   ]}
                 >
-                  Choose a time in 15-minute intervals.
+                  {exactTimeMode
+                    ? 'Choose an exact time.'
+                    : 'Choose a time in 15-minute intervals.'}
                 </Text>
               </View>
 
@@ -2249,52 +2292,150 @@ export default function EfficiencyScreen() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              style={styles.timeOptionsList}
-            >
-              {TIME_OPTIONS.map((time) => {
-                const selected =
-                  timePickerTarget === 'start'
-                    ? newTaskStartTime === time
-                    : newTaskEndTime === time;
-
-                return (
-                  <TouchableOpacity
-                    key={time}
-                    style={[
-                      styles.timeOption,
-                      { borderBottomColor: theme.border },
-                      selected && {
-                        backgroundColor: `${theme.efficiencyAccent}18`,
-                      },
-                    ]}
-                    onPress={() => selectTaskTime(time)}
-                  >
-                    <Text
+            {exactTimeMode ? (
+              <View style={styles.exactTimeContent}>
+                <Text style={[styles.exactTimeLabel, { color: theme.textSecondary }]}>HOUR</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.exactTimeOptions}
+                >
+                  {Array.from({ length: 12 }, (_, index) => index + 1).map((hour) => (
+                    <TouchableOpacity
+                      key={hour}
                       style={[
-                        styles.timeOptionText,
-                        {
-                          color: selected
-                            ? theme.efficiencyAccent
-                            : theme.textPrimary,
+                        styles.exactTimeOption,
+                        { borderColor: theme.border },
+                        exactHour === hour && {
+                          backgroundColor: theme.efficiencyAccent,
+                          borderColor: theme.efficiencyAccent,
                         },
                       ]}
+                      onPress={() => setExactHour(hour)}
                     >
-                      {formatTaskTime(time)}
-                    </Text>
+                      <Text style={{ color: exactHour === hour ? '#FFFFFF' : theme.textPrimary, fontWeight: '800' }}>
+                        {hour}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
 
-                    {selected && (
-                      <Ionicons
-                        name="checkmark-circle"
-                        size={20}
-                        color={theme.efficiencyAccent}
-                      />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+                <Text style={[styles.exactTimeLabel, { color: theme.textSecondary }]}>MINUTE</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.exactTimeOptions}
+                >
+                  {Array.from({ length: 60 }, (_, minute) => minute).map((minute) => (
+                    <TouchableOpacity
+                      key={minute}
+                      style={[
+                        styles.exactTimeOption,
+                        { borderColor: theme.border },
+                        exactMinute === minute && {
+                          backgroundColor: theme.efficiencyAccent,
+                          borderColor: theme.efficiencyAccent,
+                        },
+                      ]}
+                      onPress={() => setExactMinute(minute)}
+                    >
+                      <Text style={{ color: exactMinute === minute ? '#FFFFFF' : theme.textPrimary, fontWeight: '800' }}>
+                        {String(minute).padStart(2, '0')}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+
+                <View style={styles.exactPeriodRow}>
+                  {(['AM', 'PM'] as const).map((period) => (
+                    <TouchableOpacity
+                      key={period}
+                      style={[
+                        styles.exactPeriodOption,
+                        { borderColor: theme.border },
+                        exactPeriod === period && {
+                          backgroundColor: theme.efficiencyAccent,
+                          borderColor: theme.efficiencyAccent,
+                        },
+                      ]}
+                      onPress={() => setExactPeriod(period)}
+                    >
+                      <Text style={{ color: exactPeriod === period ? '#FFFFFF' : theme.textPrimary, fontWeight: '800' }}>
+                        {period}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.exactTimeApplyButton, { backgroundColor: theme.efficiencyAccent }]}
+                  onPress={applyExactTime}
+                >
+                  <Text style={styles.exactTimeApplyText}>Use Exact Time</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity onPress={() => setExactTimeMode(false)}>
+                  <Text style={[styles.exactTimeBackText, { color: theme.efficiencyAccent }]}>Back to 15-minute options</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                style={styles.timeOptionsList}
+              >
+                {TIME_OPTIONS.map((time) => {
+                  const selected =
+                    timePickerTarget === 'start'
+                      ? newTaskStartTime === time
+                      : newTaskEndTime === time;
+
+                  return (
+                    <TouchableOpacity
+                      key={time}
+                      style={[
+                        styles.timeOption,
+                        { borderBottomColor: theme.border },
+                        selected && {
+                          backgroundColor: `${theme.efficiencyAccent}18`,
+                        },
+                      ]}
+                      onPress={() => selectTaskTime(time)}
+                    >
+                      <Text
+                        style={[
+                          styles.timeOptionText,
+                          {
+                            color: selected
+                              ? theme.efficiencyAccent
+                              : theme.textPrimary,
+                          },
+                        ]}
+                      >
+                        {formatTaskTime(time)}
+                      </Text>
+
+                      {selected && (
+                        <Ionicons
+                          name="checkmark-circle"
+                          size={20}
+                          color={theme.efficiencyAccent}
+                        />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+
+            {!exactTimeMode && (
+              <TouchableOpacity
+                style={[styles.exactTimeLink, { borderTopColor: theme.border }]}
+                onPress={prepareExactTime}
+              >
+                <Ionicons name="options-outline" size={16} color={theme.efficiencyAccent} />
+                <Text style={[styles.exactTimeLinkText, { color: theme.efficiencyAccent }]}>Set Exact Time</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </Modal>
@@ -3120,6 +3261,82 @@ const styles = StyleSheet.create({
 
   timeOptionsList: {
     borderTopWidth: StyleSheet.hairlineWidth,
+  },
+
+  exactTimeLink: {
+    minHeight: 44,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+
+  exactTimeLinkText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+
+  exactTimeContent: {
+    padding: 16,
+    gap: 8,
+  },
+
+  exactTimeLabel: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.7,
+  },
+
+  exactTimeOptions: {
+    gap: 7,
+    paddingVertical: 2,
+  },
+
+  exactTimeOption: {
+    minWidth: 42,
+    height: 38,
+    borderWidth: 1,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 9,
+  },
+
+  exactPeriodRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 3,
+  },
+
+  exactPeriodOption: {
+    flex: 1,
+    height: 38,
+    borderWidth: 1,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  exactTimeApplyButton: {
+    minHeight: 42,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+
+  exactTimeApplyText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+
+  exactTimeBackText: {
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '800',
+    paddingVertical: 4,
   },
 
   timeOption: {

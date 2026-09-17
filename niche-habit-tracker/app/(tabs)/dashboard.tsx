@@ -38,12 +38,14 @@ import {
 import {
   loadUserProfile,
 } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/userProfileStorage';
+import {
+  cancelStoredTaskNotifications,
+  loadTimelineNotifications,
+  saveTimelineNotifications,
+  StoredTaskNotifications,
+} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/services/taskNotificationService';
 
 const STORAGE_KEY_CHAWGEE_BRIEFING = '@chawgee_briefing';
-const STORAGE_KEY_TIMELINE_NOTIFICATIONS =
-  '@chawgee_timeline_notifications';
-
-
 type RangePreset = 'today' | '7d' | '14d' | '30d' | 'custom';
 
 interface DashboardDateRange {
@@ -845,110 +847,190 @@ export default function DashboardScreen() {
         const allowed = await ensureNotificationPermission();
         if (!allowed) return;
 
-        const scopedKey = await getUserScopedStorageKey(
-          STORAGE_KEY_TIMELINE_NOTIFICATIONS
-        );
-
-        const rawSaved = await AsyncStorage.getItem(scopedKey);
-        const saved: Record<
-          string,
-          { notificationId: string; signature: string }
-        > = rawSaved ? JSON.parse(rawSaved) : {};
-
-        const next: Record<
-          string,
-          { notificationId: string; signature: string }
-        > = {};
+        const saved = await loadTimelineNotifications();
+        const next: Record<string, StoredTaskNotifications> = {};
 
         const now = new Date();
         const todayKey = toDateKey(now);
 
         for (const item of items) {
-          if (
-            item.completed ||
-            item.outcome === 'missed' ||
-            !item.startTime ||
-            item.date < todayKey
-          ) {
-            continue;
-          }
-
-          const [hourString, minuteString] =
-            item.startTime.split(':');
-          const hour = Number(hourString);
-          const minute = Number(minuteString);
-
-          if (
-            !Number.isInteger(hour) ||
-            !Number.isInteger(minute)
-          ) {
-            continue;
-          }
-
-          const start = fromDateKey(item.date);
-          start.setHours(hour, minute, 0, 0);
-
-          const notifyAt = new Date(
-            start.getTime() - 10 * 60 * 1000
-          );
-
-          if (notifyAt <= now) continue;
-
-          const signature = [
-            item.title,
-            item.date,
-            item.startTime,
-            item.endTime ?? '',
-          ].join('|');
-
           const existing = saved[item.id];
+          const desired: StoredTaskNotifications = {};
 
-          if (
-            existing &&
-            existing.signature === signature
-          ) {
-            next[item.id] = existing;
-            continue;
+          const start = item.startTime
+            ? fromDateKey(item.date)
+            : null;
+          const end = item.endTime
+            ? fromDateKey(item.date)
+            : null;
+
+          if (start && end) {
+            const [startHourString, startMinuteString] =
+              item.startTime!.split(':');
+            const [endHourString, endMinuteString] =
+              item.endTime!.split(':');
+            const startHour = Number(startHourString);
+            const startMinute = Number(startMinuteString);
+            const endHour = Number(endHourString);
+            const endMinute = Number(endMinuteString);
+
+            if (
+              Number.isInteger(startHour) &&
+              Number.isInteger(startMinute) &&
+              Number.isInteger(endHour) &&
+              Number.isInteger(endMinute) &&
+              startHour >= 0 && startHour <= 23 &&
+              startMinute >= 0 && startMinute <= 59 &&
+              endHour >= 0 && endHour <= 23 &&
+              endMinute >= 0 && endMinute <= 59
+            ) {
+              start.setHours(startHour, startMinute, 0, 0);
+              end.setHours(endHour, endMinute, 0, 0);
+            } else {
+              start.setTime(NaN);
+              end.setTime(NaN);
+            }
           }
 
-          if (existing?.notificationId) {
+          const validSchedule = Boolean(
+            start && end &&
+            Number.isFinite(start.getTime()) &&
+            Number.isFinite(end.getTime()) &&
+            end > start
+          );
+          const terminal =
+            item.completed ||
+            item.outcome === 'completed' ||
+            item.outcome === 'missed';
+          const localTask =
+            item.source === 'manual' || item.source === 'chawgee';
+
+          if (
+            !terminal &&
+            validSchedule &&
+            item.date >= todayKey &&
+            start!.getTime() - 10 * 60 * 1000 > now.getTime()
+          ) {
+            const signature = [
+              'pre_start',
+              item.title,
+              item.date,
+              item.startTime,
+              item.endTime ?? '',
+            ].join('|');
+            if (existing?.preStart?.signature === signature) {
+              desired.preStart = existing.preStart;
+            } else {
+              if (existing?.preStart) {
+                await Notifications.cancelScheduledNotificationAsync(
+                  existing.preStart.notificationId
+                );
+              }
+              const notificationId =
+                await Notifications.scheduleNotificationAsync({
+                  content: {
+                    title: 'Upcoming with Chawgee',
+                    body: `${item.title} starts in 10 minutes.`,
+                    data: {
+                      type: 'timeline_upcoming',
+                      notificationRole: 'pre_start',
+                      taskId: item.id,
+                      taskDate: item.date,
+                    },
+                    sound: true,
+                  },
+                  trigger: {
+                    type:
+                      Notifications.SchedulableTriggerInputTypes.DATE,
+                    date: new Date(
+                      start!.getTime() - 10 * 60 * 1000
+                    ),
+                  },
+                });
+              desired.preStart = { notificationId, signature };
+            }
+          }
+
+          if (
+            !terminal &&
+            localTask &&
+            validSchedule &&
+            end!.getTime() + 5 * 60 * 1000 > now.getTime()
+          ) {
+            const triggerAt = new Date(
+              end!.getTime() + 5 * 60 * 1000
+            );
+            const signature = [
+              'outcome_prompt',
+              item.title,
+              item.date,
+              item.startTime,
+              item.endTime,
+              triggerAt.toISOString(),
+            ].join('|');
+            if (existing?.outcomePrompt?.signature === signature) {
+              desired.outcomePrompt = existing.outcomePrompt;
+            } else {
+              if (existing?.outcomePrompt) {
+                await Notifications.cancelScheduledNotificationAsync(
+                  existing.outcomePrompt.notificationId
+                );
+              }
+              const notificationId =
+                await Notifications.scheduleNotificationAsync({
+                  content: {
+                    title: 'How did it go?',
+                    body: `${item.title} has ended. Let Chawgee know if you completed it, missed it, or need to reschedule.`,
+                    data: {
+                      type: 'task_outcome_prompt',
+                      notificationRole: 'outcome_prompt',
+                      taskId: item.id,
+                      taskDate: item.date,
+                    },
+                    sound: true,
+                  },
+                  trigger: {
+                    type:
+                      Notifications.SchedulableTriggerInputTypes.DATE,
+                    date: triggerAt,
+                  },
+                });
+              desired.outcomePrompt = {
+                notificationId,
+                signature,
+              };
+            }
+          }
+
+          if (existing?.preStart && !desired.preStart) {
             await Notifications.cancelScheduledNotificationAsync(
-              existing.notificationId
+              existing.preStart.notificationId
             );
           }
-
-          const notificationId =
-            await Notifications.scheduleNotificationAsync({
-              content: {
-                title: 'Upcoming with Chawgee',
-                body: `${item.title} starts in 10 minutes.`,
-                data: {
-                  type: 'timeline_upcoming',
-                  taskId: item.id,
-                  taskDate: item.date,
-                },
-                sound: true,
-              },
-              trigger: {
-                type:
-                  Notifications.SchedulableTriggerInputTypes.DATE,
-                date: notifyAt,
-              },
-            });
-
-          next[item.id] = {
-            notificationId,
-            signature,
-          };
+          if (existing?.outcomePrompt && !desired.outcomePrompt) {
+            await Notifications.cancelScheduledNotificationAsync(
+              existing.outcomePrompt.notificationId
+            );
+          }
+          if (desired.preStart || desired.outcomePrompt) {
+            next[item.id] = desired;
+          }
 
         }
 
         for (const [taskId, record] of Object.entries(saved)) {
-          if (!next[taskId] && record.notificationId) {
+          if (!next[taskId]) {
             try {
-              await Notifications.cancelScheduledNotificationAsync(
-                record.notificationId
-              );
+              for (const stored of [
+                record.preStart,
+                record.outcomePrompt,
+              ]) {
+                if (stored) {
+                  await Notifications.cancelScheduledNotificationAsync(
+                    stored.notificationId
+                  );
+                }
+              }
             } catch (cancelError) {
               console.warn(
                 'Unable to cancel stale timeline notification:',
@@ -958,10 +1040,7 @@ export default function DashboardScreen() {
           }
         }
 
-        await AsyncStorage.setItem(
-          scopedKey,
-          JSON.stringify(next)
-        );
+        await saveTimelineNotifications(next);
       } catch (error) {
         console.warn(
           'Unable to sync Chawgee timeline notifications:',
@@ -974,33 +1053,7 @@ export default function DashboardScreen() {
 
   const cancelTimelineNotification = useCallback(
     async (taskId: string) => {
-      try {
-        const scopedKey = await getUserScopedStorageKey(
-          STORAGE_KEY_TIMELINE_NOTIFICATIONS
-        );
-        const rawSaved = await AsyncStorage.getItem(scopedKey);
-        const saved: Record<
-          string,
-          { notificationId: string; signature: string }
-        > = rawSaved ? JSON.parse(rawSaved) : {};
-        const scheduled = saved[taskId];
-
-        if (!scheduled?.notificationId) return;
-
-        await Notifications.cancelScheduledNotificationAsync(
-          scheduled.notificationId
-        );
-        delete saved[taskId];
-        await AsyncStorage.setItem(
-          scopedKey,
-          JSON.stringify(saved)
-        );
-      } catch (notificationError) {
-        console.warn(
-          'Unable to cancel task notification:',
-          notificationError
-        );
-      }
+      await cancelStoredTaskNotifications(taskId);
     },
     []
   );
