@@ -33,6 +33,7 @@ import {
   fetchDeviceEvents,
   getTasks,
   setTaskCompleted,
+  setTaskOutcome,
 } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/efficiencyStorage';
 import {
   loadUserProfile,
@@ -395,12 +396,25 @@ const timelineTimeToMinutes = (value?: string): number | null => {
   return hours * 60 + minutes;
 };
 
+const timelineDateTime = (
+  dateKey: string,
+  time?: string
+): Date | null => {
+  const minutes = timelineTimeToMinutes(time);
+  if (minutes === null) return null;
+
+  const date = fromDateKey(dateKey);
+  date.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
+  return date;
+};
+
 type TimelineLifecycleState =
   | 'upcoming'
   | 'starting_soon'
   | 'in_progress'
   | 'awaiting_outcome'
   | 'completed'
+  | 'missed'
   | 'unscheduled';
 
 interface TimelineDeckItem {
@@ -412,34 +426,57 @@ interface TimelineDeckItem {
 
 const getTimelineLifecycle = (
   item: CalendarTask,
-  nowMinutes: number
+  now: Date
 ): TimelineLifecycleState => {
-  if (item.completed) return 'completed';
+  if (item.outcome === 'completed' || item.completed) {
+    return 'completed';
+  }
 
-  const start = timelineTimeToMinutes(item.startTime);
-  const end = timelineTimeToMinutes(item.endTime);
+  if (item.outcome === 'missed') return 'missed';
 
-  if (start === null || end === null) return 'unscheduled';
+  const start = timelineDateTime(item.date, item.startTime);
+  const end = timelineDateTime(item.date, item.endTime);
 
-  if (nowMinutes >= end) return 'awaiting_outcome';
-  if (nowMinutes >= start) return 'in_progress';
-  if (start - nowMinutes <= 10) return 'starting_soon';
+  if (!start || !end) return 'unscheduled';
+
+  if (now >= end) return 'awaiting_outcome';
+  if (now >= start) return 'in_progress';
+  if (start.getTime() - now.getTime() <= 10 * 60 * 1000) {
+    return 'starting_soon';
+  }
 
   return 'upcoming';
 };
 
 const getLifecycleLabel = (
-  lifecycle: TimelineLifecycleState
+  lifecycle: TimelineLifecycleState,
+  item: CalendarTask,
+  now: Date
 ): string => {
   switch (lifecycle) {
-    case 'starting_soon':
-      return 'STARTING IN 10 MINUTES';
+    case 'starting_soon': {
+      const start = timelineDateTime(item.date, item.startTime);
+      const remainingMinutes = start
+        ? Math.max(
+            1,
+            Math.ceil(
+              (start.getTime() - now.getTime()) / 60000
+            )
+          )
+        : 10;
+
+      return `STARTING IN ${remainingMinutes} MINUTE${
+        remainingMinutes === 1 ? '' : 'S'
+      }`;
+    }
     case 'in_progress':
       return 'IN PROGRESS';
     case 'awaiting_outcome':
       return 'TIME PASSED • OUTCOME NEEDED';
     case 'completed':
       return 'COMPLETED';
+    case 'missed':
+      return 'MISSED';
     case 'unscheduled':
       return 'TIME NOT SET';
     default:
@@ -829,6 +866,7 @@ export default function DashboardScreen() {
         for (const item of items) {
           if (
             item.completed ||
+            item.outcome === 'missed' ||
             !item.startTime ||
             item.date < todayKey
           ) {
@@ -934,6 +972,39 @@ export default function DashboardScreen() {
     [ensureNotificationPermission]
   );
 
+  const cancelTimelineNotification = useCallback(
+    async (taskId: string) => {
+      try {
+        const scopedKey = await getUserScopedStorageKey(
+          STORAGE_KEY_TIMELINE_NOTIFICATIONS
+        );
+        const rawSaved = await AsyncStorage.getItem(scopedKey);
+        const saved: Record<
+          string,
+          { notificationId: string; signature: string }
+        > = rawSaved ? JSON.parse(rawSaved) : {};
+        const scheduled = saved[taskId];
+
+        if (!scheduled?.notificationId) return;
+
+        await Notifications.cancelScheduledNotificationAsync(
+          scheduled.notificationId
+        );
+        delete saved[taskId];
+        await AsyncStorage.setItem(
+          scopedKey,
+          JSON.stringify(saved)
+        );
+      } catch (notificationError) {
+        console.warn(
+          'Unable to cancel task notification:',
+          notificationError
+        );
+      }
+    },
+    []
+  );
+
   const loadDashboardTimeline = useCallback(async () => {
     try {
       const [savedTasks, profile] = await Promise.all([
@@ -995,6 +1066,9 @@ export default function DashboardScreen() {
     if (task.source === 'calendar') return;
 
     const completed = !task.completed;
+    const timestamp = completed
+      ? new Date().toISOString()
+      : undefined;
 
     Haptics.selectionAsync();
 
@@ -1004,9 +1078,9 @@ export default function DashboardScreen() {
           ? {
               ...item,
               completed,
-              completedAt: completed
-                ? new Date().toISOString()
-                : undefined,
+              completedAt: timestamp,
+              outcome: completed ? 'completed' : undefined,
+              outcomeAt: timestamp,
             }
           : item
       )
@@ -1016,33 +1090,7 @@ export default function DashboardScreen() {
       await setTaskCompleted(task.id, completed);
 
       if (completed) {
-        try {
-          const scopedKey = await getUserScopedStorageKey(
-            STORAGE_KEY_TIMELINE_NOTIFICATIONS
-          );
-          const rawSaved = await AsyncStorage.getItem(scopedKey);
-          const saved: Record<
-            string,
-            { notificationId: string; signature: string }
-          > = rawSaved ? JSON.parse(rawSaved) : {};
-          const scheduled = saved[task.id];
-
-          if (scheduled?.notificationId) {
-            await Notifications.cancelScheduledNotificationAsync(
-              scheduled.notificationId
-            );
-            delete saved[task.id];
-            await AsyncStorage.setItem(
-              scopedKey,
-              JSON.stringify(saved)
-            );
-          }
-        } catch (notificationError) {
-          console.warn(
-            'Unable to cancel completed task notification:',
-            notificationError
-          );
-        }
+        await cancelTimelineNotification(task.id);
       }
     } catch (error) {
       console.error(
@@ -1057,8 +1105,54 @@ export default function DashboardScreen() {
                 ...item,
                 completed: task.completed,
                 completedAt: task.completedAt,
+                outcome: task.outcome,
+                outcomeAt: task.outcomeAt,
               }
             : item
+        )
+      );
+    }
+  };
+
+  const setDashboardTaskOutcome = async (
+    task: CalendarTask,
+    outcome: 'completed' | 'missed'
+  ) => {
+    if (task.source === 'calendar') return;
+
+    const timestamp = new Date().toISOString();
+    const nextTask = {
+      ...task,
+      completed: outcome === 'completed',
+      completedAt:
+        outcome === 'completed' ? timestamp : undefined,
+      outcome,
+      outcomeAt: timestamp,
+    };
+
+    setTimelineItems((current) =>
+      current.map((item) =>
+        item.id === task.id ? nextTask : item
+      )
+    );
+
+    try {
+      const savedTask = await setTaskOutcome(task.id, outcome);
+
+      if (!savedTask) {
+        throw new Error('Task was not found while saving outcome.');
+      }
+
+      await cancelTimelineNotification(task.id);
+    } catch (error) {
+      console.error(
+        'Failed to update task outcome from dashboard:',
+        error
+      );
+
+      setTimelineItems((current) =>
+        current.map((item) =>
+          item.id === task.id ? task : item
         )
       );
     }
@@ -1067,9 +1161,6 @@ export default function DashboardScreen() {
   const dashboardTodayKey = toDateKey(timelineNow);
 
   const dashboardDeck = useMemo(() => {
-    const nowMinutes =
-      timelineNow.getHours() * 60 + timelineNow.getMinutes();
-
     const todaysItems = timelineItems.filter(
       (item) => item.date === dashboardTodayKey
     );
@@ -1077,7 +1168,7 @@ export default function DashboardScreen() {
     const deckItems: TimelineDeckItem[] = todaysItems
       .map((item) => ({
         item,
-        lifecycle: getTimelineLifecycle(item, nowMinutes),
+        lifecycle: getTimelineLifecycle(item, timelineNow),
         start: timelineTimeToMinutes(item.startTime),
         end: timelineTimeToMinutes(item.endTime),
       }))
@@ -1220,6 +1311,44 @@ export default function DashboardScreen() {
 
   const activeDeckItem =
     dashboardDeck.items[deckIndex] ?? null;
+
+  const openCalendarReschedule = (task: CalendarTask) => {
+    if (
+      task.source !== 'calendar' ||
+      !task.externalEventId ||
+      !task.calendarAllowsModifications ||
+      task.calendarAllDay ||
+      task.calendarRecurring
+    ) {
+      return;
+    }
+
+    router.push({
+      pathname: '/(tabs)/efficiency',
+      params: {
+        mode: 'calendar-reschedule',
+        source: 'calendar',
+        externalEventId: task.externalEventId,
+        calendarId: task.calendarId,
+      },
+    });
+  };
+
+  const followingLayerItems = dashboardDeck.items.slice(
+    deckIndex + 1,
+    deckIndex + 3
+  );
+  const precedingLayerCount =
+    2 - followingLayerItems.length;
+  const timelineLayerItems = [
+    ...followingLayerItems,
+    ...dashboardDeck.items
+      .slice(
+        Math.max(0, deckIndex - precedingLayerCount),
+        deckIndex
+      )
+      .reverse(),
+  ];
 
 
 
@@ -1659,15 +1788,10 @@ export default function DashboardScreen() {
         ) : (
           <View style={styles.timelineDeckShell}>
             <View style={styles.timelineDeckStage}>
-              {dashboardDeck.items
-                .slice(deckIndex + 1, deckIndex + 3)
+              {timelineLayerItems
                 .reverse()
                 .map((entry, reverseIndex, visibleBehind) => {
-                  const depth =
-                    Math.min(
-                      dashboardDeck.items.length - deckIndex - 1,
-                      2
-                    ) - reverseIndex;
+                  const depth = visibleBehind.length - reverseIndex;
 
                   return (
                     <View
@@ -1680,8 +1804,8 @@ export default function DashboardScreen() {
                           backgroundColor: theme.cardBackground,
                           borderColor: theme.border,
                           top: depth * 14,
-                          left: depth * 10,
-                          right: depth * 10,
+                          left: -depth * 6,
+                          right: -depth * 6,
                           opacity: 1 - depth * 0.18,
                           zIndex: 3 - depth,
                         },
@@ -1713,6 +1837,8 @@ export default function DashboardScreen() {
                           ? theme.primaryAccent
                           : activeDeckItem.lifecycle === 'in_progress'
                             ? theme.success
+                            : activeDeckItem.lifecycle === 'missed'
+                              ? theme.danger
                             : theme.border,
                       transform: [
                         { translateX: deckSwipe.x },
@@ -1740,12 +1866,16 @@ export default function DashboardScreen() {
                                   : activeDeckItem.lifecycle ===
                                       'awaiting_outcome'
                                     ? theme.nutritionAccent
+                                      : activeDeckItem.lifecycle === 'missed'
+                                        ? theme.danger
                                     : theme.textSecondary,
                           },
                         ]}
                       >
                         {getLifecycleLabel(
-                          activeDeckItem.lifecycle
+                          activeDeckItem.lifecycle,
+                          activeDeckItem.item,
+                          timelineNow
                         )}
                       </Text>
 
@@ -1782,11 +1912,30 @@ export default function DashboardScreen() {
                     </View>
 
                     {activeDeckItem.item.source === 'calendar' ? (
-                      <Ionicons
-                        name="calendar-outline"
-                        size={22}
-                        color={theme.primaryAccent}
-                      />
+                      activeDeckItem.item.calendarAllowsModifications &&
+                      !activeDeckItem.item.calendarAllDay &&
+                      !activeDeckItem.item.calendarRecurring ? (
+                        <TouchableOpacity
+                          onPress={() =>
+                            openCalendarReschedule(
+                              activeDeckItem.item
+                            )
+                          }
+                          hitSlop={10}
+                        >
+                          <Ionicons
+                            name="calendar-outline"
+                            size={22}
+                            color={theme.primaryAccent}
+                          />
+                        </TouchableOpacity>
+                      ) : (
+                        <Ionicons
+                          name="calendar-outline"
+                          size={22}
+                          color={theme.primaryAccent}
+                        />
+                      )
                     ) : (
                       <TouchableOpacity
                         style={styles.timelineDeckCheck}
@@ -1827,20 +1976,153 @@ export default function DashboardScreen() {
                         },
                       ]}
                     >
-                      <Ionicons
-                        name="help-circle-outline"
-                        size={18}
-                        color={theme.nutritionAccent}
-                      />
-                      <Text
-                        style={[
-                          styles.timelineOutcomeText,
-                          { color: theme.textSecondary },
-                        ]}
-                      >
-                        This time has passed. Chawgee will eventually
-                        ask whether you completed or missed it.
-                      </Text>
+                      {activeDeckItem.item.source === 'calendar' ? (
+                        <>
+                          <Ionicons
+                            name="help-circle-outline"
+                            size={18}
+                            color={theme.nutritionAccent}
+                          />
+                          <Text
+                            style={[
+                              styles.timelineOutcomeText,
+                              { color: theme.textSecondary },
+                            ]}
+                          >
+                            This calendar event has passed.
+                          </Text>
+                          {activeDeckItem.item.externalEventId &&
+                            activeDeckItem.item.calendarAllowsModifications &&
+                            !activeDeckItem.item.calendarAllDay &&
+                            !activeDeckItem.item.calendarRecurring && (
+                              <TouchableOpacity
+                                style={[
+                                  styles.timelineOutcomeButton,
+                                  { borderColor: theme.border },
+                                ]}
+                                onPress={() =>
+                                  openCalendarReschedule(
+                                    activeDeckItem.item
+                                  )
+                                }
+                              >
+                                <Ionicons
+                                  name="calendar-outline"
+                                  size={16}
+                                  color={theme.textSecondary}
+                                />
+                                <Text
+                                  style={[
+                                    styles.timelineOutcomeButtonText,
+                                    { color: theme.textSecondary },
+                                  ]}
+                                >
+                                  Reschedule
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                        </>
+                      ) : (
+                        <View style={styles.timelineOutcomeContent}>
+                          <View style={styles.timelineOutcomeHeader}>
+                            <Ionicons
+                              name="help-circle-outline"
+                              size={18}
+                              color={theme.nutritionAccent}
+                            />
+                            <Text
+                              style={[
+                                styles.timelineOutcomeText,
+                                { color: theme.textSecondary },
+                              ]}
+                            >
+                              What happened?
+                            </Text>
+                          </View>
+
+                          <View style={styles.timelineOutcomeActions}>
+                            <TouchableOpacity
+                              style={[
+                                styles.timelineOutcomeButton,
+                                {
+                                  backgroundColor: theme.success,
+                                },
+                              ]}
+                              onPress={() =>
+                                setDashboardTaskOutcome(
+                                  activeDeckItem.item,
+                                  'completed'
+                                )
+                              }
+                            >
+                              <Ionicons
+                                name="checkmark"
+                                size={16}
+                                color="#FFFFFF"
+                              />
+                              <Text style={styles.timelineOutcomeButtonText}>
+                                Completed
+                              </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={[
+                                styles.timelineOutcomeButton,
+                                {
+                                  backgroundColor: theme.danger,
+                                },
+                              ]}
+                              onPress={() =>
+                                setDashboardTaskOutcome(
+                                  activeDeckItem.item,
+                                  'missed'
+                                )
+                              }
+                            >
+                              <Ionicons
+                                name="close"
+                                size={16}
+                                color="#FFFFFF"
+                              />
+                              <Text style={styles.timelineOutcomeButtonText}>
+                                Missed
+                              </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={[
+                                styles.timelineOutcomeButton,
+                                {
+                                  borderColor: theme.border,
+                                },
+                              ]}
+                              onPress={() =>
+                                router.push({
+                                  pathname: '/(tabs)/efficiency',
+                                  params: {
+                                    mode: 'reschedule',
+                                    taskId: activeDeckItem.item.id,
+                                  },
+                                })
+                              }
+                            >
+                              <Ionicons
+                                name="calendar-outline"
+                                size={16}
+                                color={theme.textSecondary}
+                              />
+                              <Text
+                                style={[
+                                  styles.timelineOutcomeButtonText,
+                                  { color: theme.textSecondary },
+                                ]}
+                              >
+                                Reschedule
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      )}
                     </View>
                   )}
 
@@ -2622,7 +2904,7 @@ const styles = StyleSheet.create({
   },
 
   timelineStackBehind: {
-    height: 170,
+    height: 215,
     paddingHorizontal: 16,
     paddingTop: 12,
   },
@@ -2685,11 +2967,44 @@ const styles = StyleSheet.create({
     gap: 8,
   },
 
-  timelineOutcomeText: {
+  timelineOutcomeContent: {
     flex: 1,
+    gap: 10,
+  },
+
+  timelineOutcomeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+
+  timelineOutcomeActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
+  },
+
+  timelineOutcomeButton: {
+    minHeight: 32,
+    borderRadius: 9,
+    borderWidth: 1,
+    paddingHorizontal: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+
+  timelineOutcomeText: {
     fontSize: 10,
     lineHeight: 15,
     fontWeight: '700',
+  },
+
+  timelineOutcomeButtonText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
   },
 
   timelineDeckFooter: {

@@ -1,9 +1,4 @@
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -21,12 +16,9 @@ import {
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-
 import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
 import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
-import {
-  loadUserProfile,
-} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/userProfileStorage';
+import { loadUserProfile } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/userProfileStorage';
 import {
   addTask,
   CalendarTask,
@@ -35,6 +27,7 @@ import {
   setTaskCompleted,
   TaskCategory,
   TaskPriority,
+  updateTask,
 } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/efficiencyStorage';
 import {
   addManualDeepWorkSession,
@@ -44,6 +37,11 @@ import {
   startDeepWorkSession,
   stopDeepWorkSession,
 } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/deepWorkStorage';
+import {
+  CalendarEventContext,
+  getCalendarEventContext,
+  rescheduleCalendarEvent,
+} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/services/calendarTaskService';
 
 const toLocalDateKey = (date = new Date()): string => {
   const year = date.getFullYear();
@@ -54,314 +52,210 @@ const toLocalDateKey = (date = new Date()): string => {
 
 const getElapsedSeconds = (startedAt?: string): number => {
   if (!startedAt) return 0;
-
-  return Math.max(
-    0,
-    Math.floor(
-      (Date.now() - new Date(startedAt).getTime()) / 1000
-    )
-  );
+  return Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
 };
 
-const formatTimerDisplay = (seconds: number) => {
+const formatTimerDisplay = (seconds: number): string => {
   const hours = Math.floor(seconds / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  const remainingSec = seconds % 60;
-
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secondsRemaining = seconds % 60;
   if (hours > 0) {
-    return `${hours.toString().padStart(2, '0')}:${mins
-      .toString()
-      .padStart(2, '0')}:${remainingSec
-      .toString()
-      .padStart(2, '0')}`;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secondsRemaining).padStart(2, '0')}`;
   }
-
-  return `${mins.toString().padStart(2, '0')}:${remainingSec
-    .toString()
-    .padStart(2, '0')}`;
+  return `${String(minutes).padStart(2, '0')}:${String(secondsRemaining).padStart(2, '0')}`;
 };
 
 const TIME_OPTIONS = Array.from({ length: 96 }, (_, index) => {
   const totalMinutes = index * 15;
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+  return `${String(Math.floor(totalMinutes / 60)).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`;
 });
 
 const formatTaskTime = (value?: string): string => {
   if (!value) return 'Select time';
-
   const [hourString, minuteString] = value.split(':');
   const hour = Number(hourString);
   const minute = Number(minuteString);
-
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
-    return value;
-  }
-
-  const suffix = hour >= 12 ? 'PM' : 'AM';
-  const displayHour = hour % 12 || 12;
-
-  return `${displayHour}:${String(minute).padStart(2, '0')} ${suffix}`;
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return value;
+  return `${hour % 12 || 12}:${String(minute).padStart(2, '0')} ${hour >= 12 ? 'PM' : 'AM'}`;
 };
 
+const fromLocalDateKey = (dateKey: string): Date => {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(year, month - 1, day);
+};
+
+const getMonthCells = (month: Date): Array<number | null> => {
+  const cells: Array<number | null> = [];
+  const firstWeekday = new Date(month.getFullYear(), month.getMonth(), 1).getDay();
+  const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  for (let index = 0; index < firstWeekday; index += 1) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day += 1) cells.push(day);
+  while (cells.length % 7 !== 0) cells.push(null);
+  return cells;
+};
+
+const formatTaskDate = (dateKey: string): string =>
+  fromLocalDateKey(dateKey).toLocaleDateString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+  });
+
+const getRouteParam = (
+  value?: string | string[]
+): string | undefined =>
+  Array.isArray(value) ? value[0] : value;
 
 export default function EfficiencyScreen() {
   const { theme = LightTheme } = useTheme() || {};
   const router = useRouter();
-  const { quickAction } = useLocalSearchParams<{
-    quickAction?: string;
+  const { quickAction, mode, taskId, source, externalEventId, calendarId } = useLocalSearchParams<{
+    quickAction?: string | string[];
+    mode?: string | string[];
+    taskId?: string | string[];
+    source?: string | string[];
+    externalEventId?: string | string[];
+    calendarId?: string | string[];
   }>();
-
+  const normalizedQuickAction = getRouteParam(quickAction);
+  const normalizedMode = getRouteParam(mode);
+  const normalizedTaskId = getRouteParam(taskId);
+  const normalizedSource = getRouteParam(source);
+  const normalizedExternalEventId = getRouteParam(externalEventId);
+  const normalizedCalendarId = getRouteParam(calendarId);
   const [workSetup, setWorkSetup] = useState('Remote');
-  const [scheduleType, setScheduleType] =
-    useState('Asynchronous');
-  const [dailyTargetHours, setDailyTargetHours] =
-    useState(0);
-
-  const [deepWorkSessions, setDeepWorkSessions] = useState<
-    DeepWorkSession[]
-  >([]);
-  const [activeSessionStartedAt, setActiveSessionStartedAt] =
-    useState<string | null>(null);
+  const [scheduleType, setScheduleType] = useState('Asynchronous');
+  const [dailyTargetHours, setDailyTargetHours] = useState(0);
+  const [deepWorkSessions, setDeepWorkSessions] = useState<DeepWorkSession[]>([]);
+  const [activeSessionStartedAt, setActiveSessionStartedAt] = useState<string | null>(null);
   const [secondsActive, setSecondsActive] = useState(0);
-
-  const [calendarSyncActive, setCalendarSyncActive] =
-    useState(false);
-
+  const [calendarSyncActive, setCalendarSyncActive] = useState(false);
   const [tasks, setTasks] = useState<CalendarTask[]>([]);
+  const [tasksLoaded, setTasksLoaded] = useState(false);
   const [taskBoardExpanded, setTaskBoardExpanded] = useState(false);
-
   const [taskModalVisible, setTaskModalVisible] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [taskFormMode, setTaskFormMode] = useState<'add' | 'edit' | 'reschedule' | 'calendar-reschedule'>('add');
+  const [calendarEventContext, setCalendarEventContext] = useState<CalendarEventContext | null>(null);
+  const [calendarEventId, setCalendarEventId] = useState<string | null>(null);
   const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [newTaskPriority, setNewTaskPriority] =
-    useState<TaskPriority>('Medium');
-  const [newTaskCategory, setNewTaskCategory] =
-    useState<TaskCategory>('Project');
-  const [newTaskEstimatedMinutes, setNewTaskEstimatedMinutes] =
-    useState('');
+  const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority>('Medium');
+  const [newTaskCategory, setNewTaskCategory] = useState<TaskCategory>('Project');
+  const [newTaskDate, setNewTaskDate] = useState(() => toLocalDateKey());
+  const [newTaskEstimatedMinutes, setNewTaskEstimatedMinutes] = useState('');
   const [newTaskStartTime, setNewTaskStartTime] = useState('');
   const [newTaskEndTime, setNewTaskEndTime] = useState('');
   const [newTaskNotes, setNewTaskNotes] = useState('');
   const [timePickerVisible, setTimePickerVisible] = useState(false);
-  const [timePickerTarget, setTimePickerTarget] =
-    useState<'start' | 'end'>('start');
-
+  const [timePickerTarget, setTimePickerTarget] = useState<'start' | 'end'>('start');
+  const [datePickerVisible, setDatePickerVisible] = useState(false);
+  const [datePickerMonth, setDatePickerMonth] = useState(() => {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth(), 1);
+  });
   const [manualLogVisible, setManualLogVisible] = useState(false);
   const [manualMinutes, setManualMinutes] = useState('');
   const [manualLabel, setManualLabel] = useState('');
-
-  useEffect(() => {
-    if (quickAction !== 'addTask') return;
-
-    setTaskBoardExpanded(true);
-    setTaskModalVisible(true);
-    router.setParams({ quickAction: '' });
-  }, [quickAction]);
-
 
   const todayKey = toLocalDateKey();
 
   const loadEfficiencyData = useCallback(async () => {
     try {
-      const [profile, savedTasks, sessions, activeSession] =
-        await Promise.all([
-          loadUserProfile(),
-          getTasks(),
-          getDeepWorkSessions(),
-          getActiveDeepWorkSession(),
-        ]);
-
+      const [profile, savedTasks, sessions, activeSession] = await Promise.all([
+        loadUserProfile(), getTasks(), getDeepWorkSessions(), getActiveDeepWorkSession(),
+      ]);
       setWorkSetup(profile.workLocation || 'Remote');
       setScheduleType(profile.scheduleType || 'Asynchronous');
-      setDailyTargetHours(
-        Number(profile.deepWorkHours) || 0
-      );
-      setCalendarSyncActive(
-        Boolean(profile.calendarSyncEnabled)
-      );
-
+      setDailyTargetHours(Number(profile.deepWorkHours) || 0);
+      setCalendarSyncActive(Boolean(profile.calendarSyncEnabled));
       setTasks(savedTasks);
+      setTasksLoaded(true);
       setDeepWorkSessions(sessions);
-
       if (activeSession) {
         setActiveSessionStartedAt(activeSession.startedAt);
-        setSecondsActive(
-          getElapsedSeconds(activeSession.startedAt)
-        );
+        setSecondsActive(getElapsedSeconds(activeSession.startedAt));
       } else {
         setActiveSessionStartedAt(null);
         setSecondsActive(0);
       }
     } catch (error) {
-      console.error(
-        'Failed to load efficiency data:',
-        error
-      );
+      setTasksLoaded(true);
+      console.error('Failed to load efficiency data:', error);
     }
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadEfficiencyData();
-    }, [loadEfficiencyData])
-  );
+  useFocusEffect(useCallback(() => {
+    loadEfficiencyData();
+  }, [loadEfficiencyData]));
 
   useEffect(() => {
-    if (!activeSessionStartedAt) {
-      return;
-    }
-
-    const interval = setInterval(() => {
-      setSecondsActive(
-        getElapsedSeconds(activeSessionStartedAt)
-      );
-    }, 1000);
-
+    if (!activeSessionStartedAt) return;
+    const interval = setInterval(() => setSecondsActive(getElapsedSeconds(activeSessionStartedAt)), 1000);
     return () => clearInterval(interval);
   }, [activeSessionStartedAt]);
 
   const todaysSessions = useMemo(
-    () =>
-      deepWorkSessions.filter(
-        (session) => session.date === todayKey
-      ),
+    () => deepWorkSessions.filter((session) => session.date === todayKey),
     [deepWorkSessions, todayKey]
   );
-
-  const loggedMinutes = todaysSessions.reduce(
-    (sum, session) =>
-      sum + Number(session.durationMinutes || 0),
-    0
-  );
-
+  const loggedMinutes = todaysSessions.reduce((sum, session) => sum + Number(session.durationMinutes || 0), 0);
   const loggedHours = loggedMinutes / 60;
-
   const targetMinutes = dailyTargetHours * 60;
-
-  const progressPercent =
-    targetMinutes > 0
-      ? Math.min((loggedMinutes / targetMinutes) * 100, 100)
-      : 0;
+  const progressPercent = targetMinutes > 0 ? Math.min((loggedMinutes / targetMinutes) * 100, 100) : 0;
 
   const toggleTimer = async () => {
-    Haptics.impactAsync(
-      Haptics.ImpactFeedbackStyle.Medium
-    );
-
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
       if (activeSessionStartedAt) {
         const saved = await stopDeepWorkSession();
-
         setActiveSessionStartedAt(null);
         setSecondsActive(0);
-
-        if (saved) {
-          setDeepWorkSessions((current) => [
-            saved,
-            ...current,
-          ]);
-        }
-
-        Alert.alert(
-          'Focus Session Saved',
-          'Your deep work time has been added to today.'
-        );
+        if (saved) setDeepWorkSessions((current) => [saved, ...current]);
+        Alert.alert('Focus Session Saved', 'Your deep work time has been added to today.');
       } else {
         const active = await startDeepWorkSession();
-
         setActiveSessionStartedAt(active.startedAt);
-        setSecondsActive(
-          getElapsedSeconds(active.startedAt)
-        );
+        setSecondsActive(getElapsedSeconds(active.startedAt));
       }
     } catch (error) {
       console.error('Deep work timer error:', error);
-
-      Alert.alert(
-        'Unable to update timer',
-        'Please try again.'
-      );
+      Alert.alert('Unable to update timer', 'Please try again.');
     }
   };
 
   const handleManualLog = async () => {
-    const minutes = Math.round(
-      Number.parseFloat(manualMinutes)
-    );
-
+    const minutes = Math.round(Number.parseFloat(manualMinutes));
     if (!Number.isFinite(minutes) || minutes <= 0) {
-      Alert.alert(
-        'Enter focus time',
-        'Enter the number of minutes you completed.'
-      );
+      Alert.alert('Enter focus time', 'Enter the number of minutes you completed.');
       return;
     }
-
     try {
-      const saved = await addManualDeepWorkSession({
-        durationMinutes: minutes,
-        title: manualLabel.trim() || undefined,
-      });
-
-      setDeepWorkSessions((current) => [
-        saved,
-        ...current,
-      ]);
-
+      const saved = await addManualDeepWorkSession({ durationMinutes: minutes, title: manualLabel.trim() || undefined });
+      setDeepWorkSessions((current) => [saved, ...current]);
       setManualMinutes('');
       setManualLabel('');
       setManualLogVisible(false);
-
-      await Haptics.notificationAsync(
-        Haptics.NotificationFeedbackType.Success
-      );
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
-      console.error(
-        'Manual deep work log error:',
-        error
-      );
-
-      Alert.alert(
-        'Unable to save',
-        'Your focus session could not be saved.'
-      );
+      console.error('Manual deep work log error:', error);
+      Alert.alert('Unable to save', 'Your focus session could not be saved.');
     }
   };
 
   const toggleTaskCompletion = async (id: string) => {
     Haptics.selectionAsync();
-
     const task = tasks.find((item) => item.id === id);
     if (!task) return;
-
     const completed = !task.completed;
-
-    // Optimistic UI update so the interaction feels immediate.
-    setTasks((current) =>
-      current.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              completed,
-              completedAt: completed
-                ? new Date().toISOString()
-                : undefined,
-            }
-          : item
-      )
-    );
-
+    setTasks((current) => current.map((item) => item.id === id ? {
+      ...item,
+      completed,
+      completedAt: completed ? new Date().toISOString() : undefined,
+    } : item));
     try {
       await setTaskCompleted(id, completed);
     } catch (error) {
       console.error('Failed to update task:', error);
       await loadEfficiencyData();
-      Alert.alert(
-        'Unable to update task',
-        'Your task status could not be saved.'
-      );
+      Alert.alert('Unable to update task', 'Your task status could not be saved.');
     }
   };
 
@@ -397,13 +291,228 @@ export default function EfficiencyScreen() {
     setNewTaskTitle('');
     setNewTaskPriority('Medium');
     setNewTaskCategory('Project');
+    setNewTaskDate(toLocalDateKey());
     setNewTaskEstimatedMinutes('');
     setNewTaskStartTime('');
     setNewTaskEndTime('');
     setNewTaskNotes('');
   };
 
-  const handleAddTask = async () => {
+  useEffect(() => {
+    if (normalizedQuickAction !== 'addTask') return;
+
+    setEditingTaskId(null);
+    setTaskFormMode('add');
+    resetTaskForm();
+    setTaskBoardExpanded(true);
+    setTaskModalVisible(true);
+    router.setParams({ quickAction: '' });
+  }, [normalizedQuickAction]);
+
+  const openTaskEditor = (
+    task: CalendarTask,
+    formMode: 'edit' | 'reschedule'
+  ) => {
+    if (task.source !== 'manual' && task.source !== 'chawgee') {
+      Alert.alert(
+        'Task cannot be edited',
+        'Calendar events are managed by the calendar provider.'
+      );
+      return;
+    }
+
+    setEditingTaskId(task.id);
+    setTaskFormMode(formMode);
+    setNewTaskTitle(task.title);
+    setNewTaskPriority(task.priority);
+    setNewTaskCategory(task.category);
+    setNewTaskDate(task.date);
+    setNewTaskEstimatedMinutes(
+      task.estimatedMinutes?.toString() || ''
+    );
+    setNewTaskStartTime(task.startTime || '');
+    setNewTaskEndTime(task.endTime || '');
+    setNewTaskNotes(task.notes || '');
+    setTaskBoardExpanded(true);
+    setTaskModalVisible(true);
+  };
+
+  useEffect(() => {
+    if (
+      normalizedMode !== 'reschedule' ||
+      !normalizedTaskId ||
+      !tasksLoaded
+    ) {
+      return;
+    }
+
+    const task = tasks.find(
+      (item) => item.id === normalizedTaskId
+    );
+
+    if (!task) {
+      Alert.alert(
+        'Task unavailable',
+        'That task could not be found.'
+      );
+      router.setParams({ mode: '', taskId: '' });
+      return;
+    }
+
+    if (task.source !== 'manual' && task.source !== 'chawgee') {
+      Alert.alert(
+        'Task cannot be rescheduled here',
+        'Calendar events are managed by the calendar provider.'
+      );
+      router.setParams({ mode: '', taskId: '' });
+      return;
+    }
+
+    openTaskEditor(task, 'reschedule');
+    router.setParams({ mode: '', taskId: '' });
+  }, [normalizedMode, normalizedTaskId, tasks, tasksLoaded]);
+
+  useEffect(() => {
+    if (
+      normalizedMode !== 'calendar-reschedule' ||
+      normalizedSource !== 'calendar' ||
+      !normalizedExternalEventId
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadCalendarEvent = async () => {
+      const result = await getCalendarEventContext(
+        normalizedExternalEventId,
+        normalizedCalendarId
+      );
+
+      if (cancelled) return;
+
+      if (!result.ok) {
+        Alert.alert('Calendar event unavailable', result.message);
+        return;
+      }
+
+      setCalendarEventContext(result.value);
+      setCalendarEventId(result.value.externalEventId);
+      setTaskFormMode('calendar-reschedule');
+      setNewTaskTitle(result.value.event.title || 'Calendar Event');
+      setNewTaskDate(toLocalDateKey(result.value.startDate));
+      setNewTaskStartTime(
+        `${String(result.value.startDate.getHours()).padStart(2, '0')}:${String(
+          result.value.startDate.getMinutes()
+        ).padStart(2, '0')}`
+      );
+      setNewTaskEndTime(
+        `${String(result.value.endDate.getHours()).padStart(2, '0')}:${String(
+          result.value.endDate.getMinutes()
+        ).padStart(2, '0')}`
+      );
+      setTaskBoardExpanded(true);
+      setTaskModalVisible(true);
+      router.setParams({
+        mode: '',
+        source: '',
+        externalEventId: '',
+        calendarId: '',
+      });
+    };
+
+    loadCalendarEvent();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    normalizedMode,
+    normalizedSource,
+    normalizedExternalEventId,
+    normalizedCalendarId,
+  ]);
+
+  const openDatePicker = () => {
+    const selectedDate = fromLocalDateKey(newTaskDate);
+    setDatePickerMonth(
+      new Date(
+        selectedDate.getFullYear(),
+        selectedDate.getMonth(),
+        1
+      )
+    );
+    setDatePickerVisible(true);
+  };
+
+  const selectTaskDate = (day: number) => {
+    const selectedDate = new Date(
+      datePickerMonth.getFullYear(),
+      datePickerMonth.getMonth(),
+      day
+    );
+    const selectedKey = toLocalDateKey(selectedDate);
+
+    if (selectedKey < todayKey) return;
+
+    setNewTaskDate(selectedKey);
+    setDatePickerVisible(false);
+  };
+
+  const handleSaveTask = async () => {
+    if (taskFormMode === 'calendar-reschedule') {
+      if (!calendarEventContext || !calendarEventId) {
+        Alert.alert(
+          'Calendar event unavailable',
+          'This event could not be loaded for rescheduling.'
+        );
+        return;
+      }
+
+      if (!newTaskStartTime) {
+        Alert.alert(
+          'Choose a start time',
+          'A calendar event needs a start time.'
+        );
+        return;
+      }
+
+      const [startHour, startMinute] = newTaskStartTime
+        .split(':')
+        .map(Number);
+      const [endHour, endMinute] = (newTaskEndTime || '')
+        .split(':')
+        .map(Number);
+      const nextStart = fromLocalDateKey(newTaskDate);
+      nextStart.setHours(startHour, startMinute, 0, 0);
+      const nextEnd = newTaskEndTime
+        ? fromLocalDateKey(newTaskDate)
+        : undefined;
+
+      if (nextEnd) {
+        nextEnd.setHours(endHour, endMinute, 0, 0);
+      }
+
+      const result = await rescheduleCalendarEvent(
+        calendarEventId,
+        nextStart,
+        nextEnd,
+        calendarEventContext.calendarId
+      );
+
+      if (!result.ok) {
+        Alert.alert('Unable to reschedule event', result.message);
+        return;
+      }
+
+      setCalendarEventContext(null);
+      resetTaskForm();
+      setTaskFormMode('add');
+      setTaskModalVisible(false);
+      router.replace('/(tabs)/dashboard');
+      return;
+    }
+
     if (!newTaskTitle.trim()) {
       Alert.alert(
         'Input Error',
@@ -440,31 +549,91 @@ export default function EfficiencyScreen() {
     }
 
     try {
-      const saved = await addTask({
-        title: newTaskTitle.trim(),
-        category: newTaskCategory,
-        priority: newTaskPriority,
-        date: todayKey,
-        startTime: newTaskStartTime || undefined,
-        endTime: newTaskEndTime || undefined,
-        estimatedMinutes,
-        completed: false,
-        notes: newTaskNotes.trim() || undefined,
-        source: 'manual',
-      });
+      let saved: CalendarTask | null;
 
-      setTasks((current) => [...current, saved]);
+      if (editingTaskId) {
+        const originalTask = tasks.find(
+          (task) => task.id === editingTaskId
+        );
+
+        if (!originalTask) {
+          throw new Error('Task was not found while saving.');
+        }
+
+        const scheduleChanged =
+          originalTask.date !== newTaskDate ||
+          (originalTask.startTime || '') !==
+            (newTaskStartTime || '') ||
+          (originalTask.endTime || '') !==
+            (newTaskEndTime || '');
+        const shouldClearOutcome =
+          taskFormMode === 'reschedule' ||
+          (scheduleChanged &&
+            (originalTask.completed ||
+              Boolean(originalTask.outcome)));
+
+        saved = await updateTask(editingTaskId, {
+          title: newTaskTitle.trim(),
+          category: newTaskCategory,
+          priority: newTaskPriority,
+          date: newTaskDate,
+          startTime: newTaskStartTime || undefined,
+          endTime: newTaskEndTime || undefined,
+          estimatedMinutes,
+          notes: newTaskNotes.trim() || undefined,
+          ...(shouldClearOutcome
+            ? {
+                completed: false,
+                completedAt: undefined,
+                outcome: undefined,
+                outcomeAt: undefined,
+              }
+            : {}),
+        });
+      } else {
+        saved = await addTask({
+          title: newTaskTitle.trim(),
+          category: newTaskCategory,
+          priority: newTaskPriority,
+          date: newTaskDate,
+          startTime: newTaskStartTime || undefined,
+          endTime: newTaskEndTime || undefined,
+          estimatedMinutes,
+          completed: false,
+          notes: newTaskNotes.trim() || undefined,
+          source: 'manual',
+        });
+      }
+
+      if (!saved) {
+        throw new Error('Task could not be saved.');
+      }
+
+      setTasks((current) =>
+        editingTaskId
+          ? current.map((task) =>
+              task.id === saved?.id ? saved : task
+            )
+          : [...current, saved as CalendarTask]
+      );
       resetTaskForm();
+      const wasReschedule = taskFormMode === 'reschedule';
+      setEditingTaskId(null);
+      setTaskFormMode('add');
       setTaskModalVisible(false);
+
+      if (wasReschedule) {
+        router.replace('/(tabs)/dashboard');
+      }
 
       await Haptics.notificationAsync(
         Haptics.NotificationFeedbackType.Success
       );
     } catch (error) {
-      console.error('Failed to create task:', error);
+      console.error('Failed to save task:', error);
       Alert.alert(
         'Unable to save',
-        'Your task could not be created.'
+        'Your task could not be saved.'
       );
     }
   };
@@ -548,6 +717,49 @@ export default function EfficiencyScreen() {
           (b.completedAt || '').localeCompare(a.completedAt || '')
         ),
     [todaysTasks]
+  );
+
+  const upcomingTasks = useMemo(
+    () =>
+      tasks
+        .filter((task) => task.date > todayKey)
+        .sort((a, b) => {
+          const dateCompare = a.date.localeCompare(b.date);
+          if (dateCompare !== 0) return dateCompare;
+
+          const timeCompare = (a.startTime || '').localeCompare(
+            b.startTime || ''
+          );
+          if (timeCompare !== 0) return timeCompare;
+
+          return priorityRank[a.priority] - priorityRank[b.priority];
+        }),
+    [tasks, todayKey]
+  );
+
+  const historicalTasks = useMemo(
+    () =>
+      tasks
+        .filter(
+          (task) =>
+            task.date < todayKey &&
+            (task.completed || task.outcome === 'missed')
+        )
+        .sort((a, b) => b.date.localeCompare(a.date)),
+    [tasks, todayKey]
+  );
+
+  const historicalOpenTasks = useMemo(
+    () =>
+      tasks
+        .filter(
+          (task) =>
+            task.date < todayKey &&
+            !task.completed &&
+            task.outcome !== 'missed'
+        )
+        .sort((a, b) => b.date.localeCompare(a.date)),
+    [tasks, todayKey]
   );
 
   const completedTaskCount = completedTasks.length;
@@ -673,6 +885,132 @@ export default function EfficiencyScreen() {
     </View>
   );
 
+  const renderBoardTask = (task: CalendarTask) => {
+    const isMissed = task.outcome === 'missed';
+    const isCompleted = task.completed || task.outcome === 'completed';
+    const canEdit =
+      task.source === 'manual' || task.source === 'chawgee';
+
+    return (
+      <View
+        key={task.id}
+        style={[
+          styles.taskRow,
+          { borderBottomColor: theme.border },
+        ]}
+      >
+        <TouchableOpacity
+          style={styles.taskLeft}
+          disabled={!canEdit}
+          onPress={() =>
+            canEdit && openTaskEditor(task, 'edit')
+          }
+        >
+          <Ionicons
+            name={
+              isCompleted
+                ? 'checkmark-circle'
+                : isMissed
+                  ? 'close-circle'
+                  : 'ellipse-outline'
+            }
+            size={22}
+            color={
+              isCompleted
+                ? theme.success
+                : isMissed
+                  ? theme.danger
+                  : theme.textSecondary
+            }
+          />
+
+          <View style={{ flex: 1 }}>
+            <Text
+              style={[
+                styles.taskTitle,
+                {
+                  color:
+                    isCompleted || isMissed
+                      ? theme.textSecondary
+                      : theme.textPrimary,
+                  textDecorationLine: isCompleted
+                    ? 'line-through'
+                    : 'none',
+                },
+              ]}
+            >
+              {task.title}
+            </Text>
+
+            <Text
+              style={[
+                styles.taskTime,
+                { color: theme.textSecondary },
+              ]}
+            >
+              {formatTaskDate(task.date)}
+              {task.startTime
+                ? ` • ${formatTaskTime(task.startTime)}${
+                    task.endTime
+                      ? ` - ${formatTaskTime(task.endTime)}`
+                      : ''
+                  }`
+                : ''}
+            </Text>
+
+            <View style={styles.taskBoardMetaRow}>
+              <Text
+                style={[
+                  styles.taskBoardCategory,
+                  { color: theme.textSecondary },
+                ]}
+              >
+                {task.category}
+              </Text>
+              <Text
+                style={[
+                  styles.priorityPill,
+                  {
+                    color:
+                      task.priority === 'High'
+                        ? theme.danger
+                        : task.priority === 'Medium'
+                          ? theme.warning
+                          : theme.success,
+                  },
+                ]}
+              >
+                {task.priority.toUpperCase()}
+              </Text>
+              {(isCompleted || isMissed) && (
+                <Text
+                  style={[
+                    styles.taskBoardStatus,
+                    {
+                      color: isMissed
+                        ? theme.danger
+                        : theme.success,
+                    },
+                  ]}
+                >
+                  {isMissed ? 'MISSED' : 'COMPLETED'}
+                </Text>
+              )}
+            </View>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={() => deleteTask(task.id)}>
+          <Ionicons
+            name="trash-outline"
+            size={16}
+            color={theme.danger}
+          />
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
   return (
     <SafeAreaView
       style={[
@@ -746,10 +1084,7 @@ export default function EfficiencyScreen() {
               <View
                 style={[
                   styles.iconFrame,
-                  {
-                    backgroundColor:
-                      `${theme.efficiencyAccent}18`,
-                  },
+                  { backgroundColor: `${theme.efficiencyAccent}18` },
                 ]}
               >
                 <Ionicons
@@ -758,188 +1093,50 @@ export default function EfficiencyScreen() {
                   color={theme.efficiencyAccent}
                 />
               </View>
-
               <View>
-                <Text
-                  style={[
-                    styles.cardTitle,
-                    { color: theme.textPrimary },
-                  ]}
-                >
-                  Deep Work Target
-                </Text>
-
-                <Text
-                  style={[
-                    styles.cardMeta,
-                    { color: theme.textSecondary },
-                  ]}
-                >
-                  {loggedHours.toFixed(2)} /{' '}
-                  {dailyTargetHours.toFixed(1)} Hours Goal
+                <Text style={[styles.cardTitle, { color: theme.textPrimary }]}>Deep Work Target</Text>
+                <Text style={[styles.cardMeta, { color: theme.textSecondary }]}>
+                  {loggedHours.toFixed(2)} / {dailyTargetHours.toFixed(1)} Hours Goal
                 </Text>
               </View>
             </View>
-
-            <Text
-              style={[
-                styles.progressPercent,
-                { color: theme.efficiencyAccent },
-              ]}
-            >
+            <Text style={[styles.progressPercent, { color: theme.efficiencyAccent }]}>
               {progressPercent.toFixed(0)}%
             </Text>
           </View>
 
           {activeSessionStartedAt ? (
-            <View
-              style={[
-                styles.collapsedTimerBox,
-                {
-                  backgroundColor: theme.background,
-                  borderColor: theme.border,
-                },
-              ]}
-            >
+            <View style={[styles.collapsedTimerBox, { backgroundColor: theme.background, borderColor: theme.border }]}>
               <View>
-                <Text
-                  style={[
-                    styles.timerLabel,
-                    { color: theme.textSecondary },
-                  ]}
-                >
-                  FOCUS SESSION ACTIVE
-                </Text>
-                <Text
-                  style={[
-                    styles.timerDisplay,
-                    { color: theme.textPrimary },
-                  ]}
-                >
+                <Text style={[styles.timerLabel, { color: theme.textSecondary }]}>FOCUS SESSION ACTIVE</Text>
+                <Text style={[styles.timerDisplay, { color: theme.textPrimary }]}>
                   {formatTimerDisplay(secondsActive)}
                 </Text>
               </View>
-
-              <TouchableOpacity
-                style={[
-                  styles.timerBtn,
-                  { backgroundColor: theme.danger },
-                ]}
-                onPress={toggleTimer}
-              >
-                <Ionicons
-                  name="stop"
-                  size={18}
-                  color="#FFFFFF"
-                />
-                <Text style={styles.timerBtnText}>
-                  Stop & Save
-                </Text>
+              <TouchableOpacity style={[styles.timerBtn, { backgroundColor: theme.danger }]} onPress={toggleTimer}>
+                <Ionicons name="stop" size={18} color="#FFFFFF" />
+                <Text style={styles.timerBtnText}>Stop & Save</Text>
               </TouchableOpacity>
             </View>
           ) : (
             <>
-          <View
-            style={[
-              styles.progressBarTrack,
-              { backgroundColor: theme.border },
-            ]}
-          >
-            <View
-              style={[
-                styles.progressBarFill,
-                {
-                  backgroundColor: theme.efficiencyAccent,
-                  width: `${progressPercent}%`,
-                },
-              ]}
-            />
-          </View>
-
-          <View
-            style={[
-              styles.timerBox,
-              {
-                backgroundColor: theme.background,
-                borderColor: theme.border,
-              },
-            ]}
-          >
-            <View>
-              <Text
-                style={[
-                  styles.timerLabel,
-                  { color: theme.textSecondary },
-                ]}
-              >
-                {activeSessionStartedAt
-                  ? 'FOCUS SESSION ACTIVE'
-                  : 'TIMER READY'}
-              </Text>
-
-              <Text
-                style={[
-                  styles.timerDisplay,
-                  { color: theme.textPrimary },
-                ]}
-              >
-                {activeSessionStartedAt
-                  ? formatTimerDisplay(secondsActive)
-                  : '00:00'}
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              style={[
-                styles.timerBtn,
-                {
-                  backgroundColor: activeSessionStartedAt
-                    ? theme.danger
-                    : theme.efficiencyAccent,
-                },
-              ]}
-              onPress={toggleTimer}
-            >
-              <Ionicons
-                name={
-                  activeSessionStartedAt
-                    ? 'stop'
-                    : 'play'
-                }
-                size={18}
-                color="#FFFFFF"
-              />
-
-              <Text style={styles.timerBtnText}>
-                {activeSessionStartedAt
-                  ? 'Stop & Save'
-                  : 'Start Focus'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          <TouchableOpacity
-            style={[
-              styles.manualLogButton,
-              { borderColor: theme.border },
-            ]}
-            onPress={() => setManualLogVisible(true)}
-          >
-            <Ionicons
-              name="create-outline"
-              size={17}
-              color={theme.efficiencyAccent}
-            />
-
-            <Text
-              style={[
-                styles.manualLogButtonText,
-                { color: theme.textPrimary },
-              ]}
-            >
-              Log focus time manually
-            </Text>
-          </TouchableOpacity>
+              <View style={[styles.progressBarTrack, { backgroundColor: theme.border }]}>
+                <View style={[styles.progressBarFill, { backgroundColor: theme.efficiencyAccent, width: `${progressPercent}%` }]} />
+              </View>
+              <View style={[styles.timerBox, { backgroundColor: theme.background, borderColor: theme.border }]}>
+                <View>
+                  <Text style={[styles.timerLabel, { color: theme.textSecondary }]}>TIMER READY</Text>
+                  <Text style={[styles.timerDisplay, { color: theme.textPrimary }]}>00:00</Text>
+                </View>
+                <TouchableOpacity style={[styles.timerBtn, { backgroundColor: theme.efficiencyAccent }]} onPress={toggleTimer}>
+                  <Ionicons name="play" size={18} color="#FFFFFF" />
+                  <Text style={styles.timerBtnText}>Start Focus</Text>
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity style={[styles.manualLogButton, { borderColor: theme.border }]} onPress={() => setManualLogVisible(true)}>
+                <Ionicons name="create-outline" size={17} color={theme.efficiencyAccent} />
+                <Text style={[styles.manualLogButtonText, { color: theme.textPrimary }]}>Log focus time manually</Text>
+              </TouchableOpacity>
             </>
           )}
         </View>
@@ -1214,6 +1411,9 @@ export default function EfficiencyScreen() {
                 { backgroundColor: theme.efficiencyAccent },
               ]}
               onPress={() => {
+                resetTaskForm();
+                setEditingTaskId(null);
+                setTaskFormMode('add');
                 setTaskBoardExpanded(true);
                 setTaskModalVisible(true);
               }}
@@ -1240,116 +1440,63 @@ export default function EfficiencyScreen() {
             },
           ]}
         >
-          {todaysTasks.length === 0 ? (
-            <Text
-              style={[
-                styles.emptyText,
-                { color: theme.textSecondary },
-              ]}
-            >
-              No active tasks for today.
-            </Text>
-          ) : (
-            todaysTasks.map((task) => (
-              <View
-                key={task.id}
+          {todaysTasks.length > 0 && (
+            <View style={styles.taskBoardSection}>
+              <Text
                 style={[
-                  styles.taskRow,
-                  {
-                    borderBottomColor: theme.border,
-                  },
+                  styles.taskBoardSectionTitle,
+                  { color: theme.textSecondary },
                 ]}
               >
-                <TouchableOpacity
-                  style={styles.taskLeft}
-                  onPress={() =>
-                    toggleTaskCompletion(task.id)
-                  }
-                >
-                  <Ionicons
-                    name={
-                      task.completed
-                        ? 'checkmark-circle'
-                        : 'ellipse-outline'
-                    }
-                    size={22}
-                    color={
-                      task.completed
-                        ? theme.efficiencyAccent
-                        : theme.textSecondary
-                    }
-                  />
-
-                  <View style={{ flex: 1 }}>
-                    <Text
-                      style={[
-                        styles.taskTitle,
-                        {
-                          color: task.completed
-                            ? theme.textSecondary
-                            : theme.textPrimary,
-                          textDecorationLine:
-                            task.completed
-                              ? 'line-through'
-                              : 'none',
-                        },
-                      ]}
-                    >
-                      {task.title}
-                    </Text>
-
-                    {(task.startTime || task.endTime || task.estimatedMinutes) && (
-                      <Text
-                        style={[
-                          styles.taskTime,
-                          { color: theme.textSecondary },
-                        ]}
-                      >
-                        {task.startTime
-                          ? `${formatTaskTime(task.startTime)}${
-                              task.endTime
-                                ? ` - ${formatTaskTime(task.endTime)}`
-                                : ''
-                            }`
-                          : `${task.estimatedMinutes} min estimated`}
-                      </Text>
-                    )}
-                  </View>
-                </TouchableOpacity>
-
-                <View style={styles.taskRight}>
-                  <Text
-                    style={[
-                      styles.priorityPill,
-                      {
-                        color:
-                          task.priority === 'High'
-                            ? theme.danger
-                            : task.priority ===
-                                'Medium'
-                              ? theme.warning
-                              : theme.success,
-                      },
-                    ]}
-                  >
-                    {task.priority.toUpperCase()}
-                  </Text>
-
-                  <TouchableOpacity
-                    onPress={() =>
-                      deleteTask(task.id)
-                    }
-                  >
-                    <Ionicons
-                      name="trash-outline"
-                      size={16}
-                      color={theme.danger}
-                    />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))
+                TODAY
+              </Text>
+              {todaysTasks.map(renderBoardTask)}
+            </View>
           )}
+
+          {upcomingTasks.length > 0 && (
+            <View style={styles.taskBoardSection}>
+              <Text
+                style={[
+                  styles.taskBoardSectionTitle,
+                  { color: theme.textSecondary },
+                ]}
+              >
+                UPCOMING
+              </Text>
+              {upcomingTasks.map(renderBoardTask)}
+            </View>
+          )}
+
+          {(historicalTasks.length > 0 ||
+            historicalOpenTasks.length > 0) && (
+            <View style={styles.taskBoardSection}>
+              <Text
+                style={[
+                  styles.taskBoardSectionTitle,
+                  { color: theme.textSecondary },
+                ]}
+              >
+                HISTORY
+              </Text>
+              {historicalTasks.map(renderBoardTask)}
+              {historicalOpenTasks.map(renderBoardTask)}
+            </View>
+          )}
+
+          {todaysTasks.length === 0 &&
+            upcomingTasks.length === 0 &&
+            historicalTasks.length === 0 &&
+            historicalOpenTasks.length === 0 && (
+              <Text
+                style={[
+                  styles.emptyText,
+                  { color: theme.textSecondary },
+                ]}
+              >
+                No saved tasks.
+              </Text>
+            )}
 
           <View
             style={[
@@ -1407,8 +1554,8 @@ export default function EfficiencyScreen() {
                   { color: theme.textPrimary },
                 ]}
               >
-                {todaysTasks.length} task
-                {todaysTasks.length === 1 ? '' : 's'} today
+                {tasks.length} task
+                {tasks.length === 1 ? '' : 's'} saved
               </Text>
               <Text
                 style={[
@@ -1416,7 +1563,7 @@ export default function EfficiencyScreen() {
                   { color: theme.textSecondary },
                 ]}
               >
-                {completedTaskCount} completed • {remainingTaskCount} remaining
+                {todaysTasks.length} today • {upcomingTasks.length} upcoming
               </Text>
             </View>
             <Ionicons
@@ -1461,8 +1608,55 @@ export default function EfficiencyScreen() {
                 { color: theme.textPrimary },
               ]}
             >
-              Add Priority Task
+              {taskFormMode === 'calendar-reschedule'
+                ? 'Reschedule Calendar Event'
+                : taskFormMode === 'reschedule'
+                  ? 'Reschedule Task'
+                : taskFormMode === 'edit'
+                  ? 'Edit Task'
+                  : 'Add Priority Task'}
             </Text>
+
+            <View style={styles.inputGroup}>
+              <Text
+                style={[
+                  styles.inputLabel,
+                  { color: theme.textSecondary },
+                ]}
+              >
+                Date
+              </Text>
+
+              <TouchableOpacity
+                style={[
+                  styles.dateSelector,
+                  {
+                    borderColor: theme.border,
+                    backgroundColor: theme.background,
+                  },
+                ]}
+                onPress={openDatePicker}
+              >
+                <Ionicons
+                  name="calendar-outline"
+                  size={18}
+                  color={theme.efficiencyAccent}
+                />
+                <Text
+                  style={[
+                    styles.dateSelectorValue,
+                    { color: theme.textPrimary },
+                  ]}
+                >
+                  {formatTaskDate(newTaskDate)}
+                </Text>
+                <Ionicons
+                  name="chevron-down"
+                  size={16}
+                  color={theme.textSecondary}
+                />
+              </TouchableOpacity>
+            </View>
 
             <View style={styles.inputGroup}>
               <Text
@@ -1490,6 +1684,7 @@ export default function EfficiencyScreen() {
                 }
                 value={newTaskTitle}
                 onChangeText={setNewTaskTitle}
+                editable={taskFormMode !== 'calendar-reschedule'}
               />
             </View>
 
@@ -1604,6 +1799,7 @@ export default function EfficiencyScreen() {
               )}
             </View>
 
+            {taskFormMode !== 'calendar-reschedule' && (
             <View style={styles.inputGroup}>
               <Text
                 style={[
@@ -1630,7 +1826,9 @@ export default function EfficiencyScreen() {
                 onChangeText={setNewTaskEstimatedMinutes}
               />
             </View>
+            )}
 
+            {taskFormMode !== 'calendar-reschedule' && (
             <View style={styles.inputGroup}>
               <Text
                 style={[
@@ -1687,7 +1885,9 @@ export default function EfficiencyScreen() {
                 ))}
               </ScrollView>
             </View>
+            )}
 
+            {taskFormMode !== 'calendar-reschedule' && (
             <View style={styles.inputGroup}>
               <Text
                 style={[
@@ -1715,7 +1915,9 @@ export default function EfficiencyScreen() {
                 onChangeText={setNewTaskNotes}
               />
             </View>
+            )}
 
+            {taskFormMode !== 'calendar-reschedule' && (
             <View style={styles.inputGroup}>
               <Text
                 style={[
@@ -1768,6 +1970,7 @@ export default function EfficiencyScreen() {
                 ))}
               </View>
             </View>
+            )}
 
             <View style={styles.modalActions}>
               <TouchableOpacity
@@ -1780,6 +1983,8 @@ export default function EfficiencyScreen() {
                 ]}
                 onPress={() => {
                   resetTaskForm();
+                  setEditingTaskId(null);
+                  setTaskFormMode('add');
                   setTaskModalVisible(false);
                 }}
               >
@@ -1801,7 +2006,7 @@ export default function EfficiencyScreen() {
                       '#8B5CF6',
                   },
                 ]}
-                onPress={handleAddTask}
+                onPress={handleSaveTask}
               >
                 <Text
                   style={{
@@ -1809,12 +2014,191 @@ export default function EfficiencyScreen() {
                     fontWeight: '800',
                   }}
                 >
-                  Create Task
+                  {taskFormMode === 'add'
+                    ? 'Create Task'
+                    : 'Save Task'}
                 </Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
+        visible={datePickerVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setDatePickerVisible(false)}
+      >
+        <View style={styles.datePickerOverlay}>
+          <View
+            style={[
+              styles.datePickerCard,
+              { backgroundColor: theme.cardBackground },
+            ]}
+          >
+            <View style={styles.datePickerHeader}>
+              <View>
+                <Text
+                  style={[
+                    styles.modalTitle,
+                    { color: theme.textPrimary },
+                  ]}
+                >
+                  Choose task date
+                </Text>
+                <Text
+                  style={[
+                    styles.datePickerHint,
+                    { color: theme.textSecondary },
+                  ]}
+                >
+                  Today or a future date
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.closeDatePickerButton}
+                onPress={() => setDatePickerVisible(false)}
+              >
+                <Ionicons
+                  name="close"
+                  size={21}
+                  color={theme.textSecondary}
+                />
+              </TouchableOpacity>
+            </View>
+
+            <View
+              style={[
+                styles.datePickerMonthHeader,
+                { borderTopColor: theme.border },
+              ]}
+            >
+              <TouchableOpacity
+                disabled={
+                  datePickerMonth.getFullYear() ===
+                    new Date().getFullYear() &&
+                  datePickerMonth.getMonth() === new Date().getMonth()
+                }
+                onPress={() =>
+                  setDatePickerMonth(
+                    new Date(
+                      datePickerMonth.getFullYear(),
+                      datePickerMonth.getMonth() - 1,
+                      1
+                    )
+                  )
+                }
+                style={styles.datePickerMonthButton}
+              >
+                <Ionicons
+                  name="chevron-back"
+                  size={20}
+                  color={theme.textSecondary}
+                />
+              </TouchableOpacity>
+
+              <Text
+                style={[
+                  styles.datePickerMonthTitle,
+                  { color: theme.textPrimary },
+                ]}
+              >
+                {datePickerMonth.toLocaleDateString(undefined, {
+                  month: 'long',
+                  year: 'numeric',
+                })}
+              </Text>
+
+              <TouchableOpacity
+                onPress={() =>
+                  setDatePickerMonth(
+                    new Date(
+                      datePickerMonth.getFullYear(),
+                      datePickerMonth.getMonth() + 1,
+                      1
+                    )
+                  )
+                }
+                style={styles.datePickerMonthButton}
+              >
+                <Ionicons
+                  name="chevron-forward"
+                  size={20}
+                  color={theme.textSecondary}
+                />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.datePickerWeekRow}>
+              {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(
+                (label, index) => (
+                  <Text
+                    key={`${label}-${index}`}
+                    style={[
+                      styles.datePickerWeekLabel,
+                      { color: theme.textSecondary },
+                    ]}
+                  >
+                    {label}
+                  </Text>
+                )
+              )}
+            </View>
+
+            <View style={styles.datePickerGrid}>
+              {getMonthCells(datePickerMonth).map((day, index) => {
+                if (day === null) {
+                  return (
+                    <View
+                      key={`empty-date-${index}`}
+                      style={styles.datePickerDay}
+                    />
+                  );
+                }
+
+                const selectedDate = new Date(
+                  datePickerMonth.getFullYear(),
+                  datePickerMonth.getMonth(),
+                  day
+                );
+                const dateKey = toLocalDateKey(selectedDate);
+                const isPast = dateKey < todayKey;
+                const isSelected = dateKey === newTaskDate;
+
+                return (
+                  <TouchableOpacity
+                    key={dateKey}
+                    disabled={isPast}
+                    onPress={() => selectTaskDate(day)}
+                    style={[
+                      styles.datePickerDay,
+                      isSelected && {
+                        backgroundColor: theme.efficiencyAccent,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.datePickerDayText,
+                        {
+                          color: isPast
+                            ? `${theme.textSecondary}80`
+                            : isSelected
+                              ? '#FFFFFF'
+                              : theme.textPrimary,
+                        },
+                      ]}
+                    >
+                      {day}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </View>
       </Modal>
 
       <Modal
@@ -2406,6 +2790,18 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
 
+  taskBoardSection: {
+    gap: 0,
+  },
+
+  taskBoardSectionTitle: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.7,
+    paddingTop: 4,
+    paddingBottom: 4,
+  },
+
   taskLeft: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2422,6 +2818,23 @@ const styles = StyleSheet.create({
   taskTime: {
     fontSize: 11,
     marginTop: 2,
+  },
+
+  taskBoardMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+
+  taskBoardCategory: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+
+  taskBoardStatus: {
+    fontSize: 10,
+    fontWeight: '900',
   },
 
   taskRight: {
@@ -2488,6 +2901,22 @@ const styles = StyleSheet.create({
     height: 44,
     fontSize: 14,
     fontWeight: '700',
+  },
+
+  dateSelector: {
+    minHeight: 52,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+
+  dateSelectorValue: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '800',
   },
 
   prioritySelector: {
@@ -2573,6 +3002,93 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     padding: 20,
+  },
+
+  datePickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+
+  datePickerCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+
+  datePickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    padding: 18,
+  },
+
+  datePickerHint: {
+    fontSize: 11,
+    marginTop: 3,
+  },
+
+  closeDatePickerButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  datePickerMonthHeader: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+
+  datePickerMonthButton: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  datePickerMonthTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
+
+  datePickerWeekRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+  },
+
+  datePickerWeekLabel: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 10,
+    fontWeight: '800',
+    paddingVertical: 6,
+  },
+
+  datePickerGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 12,
+    paddingBottom: 14,
+  },
+
+  datePickerDay: {
+    width: '14.2857%',
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+  },
+
+  datePickerDayText: {
+    fontSize: 13,
+    fontWeight: '700',
   },
 
   timePickerCard: {

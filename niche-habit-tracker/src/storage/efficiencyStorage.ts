@@ -5,6 +5,8 @@ import { getUserScopedStorageKey } from './userScopedStorage';
 
 export type TaskPriority = 'High' | 'Medium' | 'Low';
 
+export type TaskOutcome = 'completed' | 'missed';
+
 export type TaskSource = 'manual' | 'calendar' | 'chawgee';
 
 export type TaskCategory =
@@ -34,6 +36,8 @@ export interface CalendarTask {
 
   completed: boolean;
   completedAt?: string;
+  outcome?: TaskOutcome;
+  outcomeAt?: string;
 
   createdAt: string;
   updatedAt?: string;
@@ -47,6 +51,12 @@ export interface CalendarTask {
    * originated from a synced calendar.
    */
   externalEventId?: string;
+
+  /** Transient provider metadata for calendar event actions. */
+  calendarId?: string;
+  calendarAllowsModifications?: boolean;
+  calendarAllDay?: boolean;
+  calendarRecurring?: boolean;
 }
 
 const TASKS_KEY = '@accountability_tasks';
@@ -92,6 +102,7 @@ export const createTaskId = (): string => {
  */
 const normalizeTask = (task: Partial<CalendarTask>): CalendarTask => {
   const now = new Date().toISOString();
+  const completed = Boolean(task.completed);
 
   return {
     id: task.id || createTaskId(),
@@ -114,9 +125,11 @@ const normalizeTask = (task: Partial<CalendarTask>): CalendarTask => {
         ? task.estimatedMinutes
         : undefined,
 
-    completed: Boolean(task.completed),
+    completed,
 
     completedAt: task.completedAt,
+    outcome: task.outcome || (completed ? 'completed' : undefined),
+    outcomeAt: task.outcomeAt,
 
     createdAt: task.createdAt || now,
     updatedAt: task.updatedAt,
@@ -126,6 +139,11 @@ const normalizeTask = (task: Partial<CalendarTask>): CalendarTask => {
     source: task.source || 'manual',
 
     externalEventId: task.externalEventId,
+
+    calendarId: task.calendarId,
+    calendarAllowsModifications: task.calendarAllowsModifications,
+    calendarAllDay: task.calendarAllDay,
+    calendarRecurring: task.calendarRecurring,
   };
 };
 
@@ -233,11 +251,29 @@ export const setTaskCompleted = async (
   id: string,
   completed: boolean
 ): Promise<CalendarTask | null> => {
+  const timestamp = completed
+    ? new Date().toISOString()
+    : undefined;
+
   return updateTask(id, {
     completed,
-    completedAt: completed
-      ? new Date().toISOString()
-      : undefined,
+    completedAt: timestamp,
+    outcome: completed ? 'completed' : undefined,
+    outcomeAt: timestamp,
+  });
+};
+
+export const setTaskOutcome = async (
+  id: string,
+  outcome: TaskOutcome | undefined
+): Promise<CalendarTask | null> => {
+  const timestamp = outcome ? new Date().toISOString() : undefined;
+
+  return updateTask(id, {
+    completed: outcome === 'completed',
+    completedAt: outcome === 'completed' ? timestamp : undefined,
+    outcome,
+    outcomeAt: timestamp,
   });
 };
 
@@ -344,6 +380,12 @@ export const fetchDeviceEvents =
         createdAt: new Date().toISOString(),
 
         source: 'calendar',
+
+        calendarId: defaultCalendar.id,
+        calendarAllowsModifications:
+          defaultCalendar.allowsModifications,
+        calendarAllDay: event.allDay === true,
+        calendarRecurring: event.recurrenceRule != null,
       });
     });
   };
