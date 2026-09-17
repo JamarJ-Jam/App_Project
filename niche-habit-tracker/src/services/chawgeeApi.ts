@@ -1,4 +1,4 @@
-const BACKEND_BASE_URL = 'http://192.168.0.5:4000';
+const BACKEND_BASE_URL = 'http://192.168.0.7:4000';
 
 export interface BriefingRequestPayload {
   userContext?: any;

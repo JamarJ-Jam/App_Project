@@ -10,8 +10,11 @@ import {
   Modal,
   Dimensions,
   Image,
+  Animated,
+  PanResponder,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,13 +25,23 @@ import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-track
 import { fetchChawgeeBriefing } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/services/chawgeeApi';
 import { buildChawgeeContext } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/services/chawgeeContext';
 import {
-  DashboardRangeSummary,
-  DashboardRangeComparison,
   getDashboardRangeComparison,
 } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/dashboardAnalytics';
 import { getUserScopedStorageKey } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/userScopedStorage';
+import {
+  CalendarTask,
+  fetchDeviceEvents,
+  getTasks,
+  setTaskCompleted,
+} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/efficiencyStorage';
+import {
+  loadUserProfile,
+} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/userProfileStorage';
 
 const STORAGE_KEY_CHAWGEE_BRIEFING = '@chawgee_briefing';
+const STORAGE_KEY_TIMELINE_NOTIFICATIONS =
+  '@chawgee_timeline_notifications';
+
 
 type RangePreset = 'today' | '7d' | '14d' | '30d' | 'custom';
 
@@ -343,10 +356,111 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 const BRIEFING_CARD_WIDTH = SCREEN_WIDTH - 76;
 const BRIEFING_AUTOPLAY_MS = 5000;
 
+
+const formatTimelineTime = (value?: string): string => {
+  if (!value) return '';
+
+  const [hourString, minuteString] = value.split(':');
+  const hour = Number(hourString);
+  const minute = Number(minuteString);
+
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return value;
+  }
+
+  const suffix = hour >= 12 ? 'PM' : 'AM';
+  const displayHour = hour % 12 || 12;
+
+  return `${displayHour}:${String(minute).padStart(2, '0')} ${suffix}`;
+};
+
+const timelineTimeToMinutes = (value?: string): number | null => {
+  if (!value) return null;
+
+  const [hourString, minuteString] = value.split(':');
+  const hours = Number(hourString);
+  const minutes = Number(minuteString);
+
+  if (
+    !Number.isInteger(hours) ||
+    !Number.isInteger(minutes) ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return null;
+  }
+
+  return hours * 60 + minutes;
+};
+
+type TimelineLifecycleState =
+  | 'upcoming'
+  | 'starting_soon'
+  | 'in_progress'
+  | 'awaiting_outcome'
+  | 'completed'
+  | 'unscheduled';
+
+interface TimelineDeckItem {
+  item: CalendarTask;
+  lifecycle: TimelineLifecycleState;
+  start: number | null;
+  end: number | null;
+}
+
+const getTimelineLifecycle = (
+  item: CalendarTask,
+  nowMinutes: number
+): TimelineLifecycleState => {
+  if (item.completed) return 'completed';
+
+  const start = timelineTimeToMinutes(item.startTime);
+  const end = timelineTimeToMinutes(item.endTime);
+
+  if (start === null || end === null) return 'unscheduled';
+
+  if (nowMinutes >= end) return 'awaiting_outcome';
+  if (nowMinutes >= start) return 'in_progress';
+  if (start - nowMinutes <= 10) return 'starting_soon';
+
+  return 'upcoming';
+};
+
+const getLifecycleLabel = (
+  lifecycle: TimelineLifecycleState
+): string => {
+  switch (lifecycle) {
+    case 'starting_soon':
+      return 'STARTING IN 10 MINUTES';
+    case 'in_progress':
+      return 'IN PROGRESS';
+    case 'awaiting_outcome':
+      return 'TIME PASSED • OUTCOME NEEDED';
+    case 'completed':
+      return 'COMPLETED';
+    case 'unscheduled':
+      return 'TIME NOT SET';
+    default:
+      return 'UPCOMING';
+  }
+};
+
 export default function DashboardScreen() {
   const { theme = LightTheme } = useTheme() || {};
   const { user } = useAuth();
   const router = useRouter();
+
+  const ensureNotificationPermission = useCallback(async () => {
+    const current = await Notifications.getPermissionsAsync();
+
+    if (current.status === 'granted') return true;
+
+    const requested = await Notifications.requestPermissionsAsync();
+    return requested.status === 'granted';
+  }, []);
+
 
   const now = new Date();
   const hour = now.getHours();
@@ -366,20 +480,19 @@ export default function DashboardScreen() {
     createPresetRange('today')
   );
 
-  const [rangeSummary, setRangeSummary] =
-    useState<DashboardRangeSummary | null>(null);
-
-  const [rangeComparison, setRangeComparison] =
-    useState<DashboardRangeComparison | null>(null);
-
-  const [targetCalories, setTargetCalories] = useState(0);
-
   const [aiBriefing, setAiBriefing] = useState<string>('');
   const [loadingAi, setLoadingAi] = useState<boolean>(false);
   const [isNewUser, setIsNewUser] = useState(false);
   const [activeBriefingPage, setActiveBriefingPage] = useState(0);
   const [briefingPaused, setBriefingPaused] = useState(false);
   const briefingCarouselRef = useRef<ScrollView>(null);
+
+  const [timelineItems, setTimelineItems] = useState<CalendarTask[]>([]);
+  const [timelineNow, setTimelineNow] = useState(() => new Date());
+  const [deckIndex, setDeckIndex] = useState(0);
+  const [deckManuallyMoved, setDeckManuallyMoved] = useState(false);
+  const deckSwipe = useRef(new Animated.ValueXY()).current;
+  const previousAutoFocusId = useRef<string | null>(null);
 
   const [calendarVisible, setCalendarVisible] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(
@@ -470,6 +583,14 @@ export default function DashboardScreen() {
     }
   }, [activeBriefingPage, briefingSlides.length]);
 
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTimelineNow(new Date());
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, []);
+
   const openCalendar = () => {
     setDraftStartDate(range.startDate);
     setDraftEndDate(range.endDate);
@@ -546,16 +667,6 @@ export default function DashboardScreen() {
       );
 
       const summary = comparison.current;
-
-      setRangeSummary(summary);
-      setRangeComparison(comparison);
-
-      setTargetCalories(
-        Number(
-          context.nutrition?.goals?.dailyCalories ??
-            context.profile?.dailyCalories
-        ) || 0
-      );
 
       const workoutCount = Array.isArray(context.fitness?.workouts)
         ? context.fitness.workouts.length
@@ -691,112 +802,426 @@ export default function DashboardScreen() {
     }
   };
 
+  const syncTimelineNotifications = useCallback(
+    async (items: CalendarTask[]) => {
+      try {
+        const allowed = await ensureNotificationPermission();
+        if (!allowed) return;
+
+        const scopedKey = await getUserScopedStorageKey(
+          STORAGE_KEY_TIMELINE_NOTIFICATIONS
+        );
+
+        const rawSaved = await AsyncStorage.getItem(scopedKey);
+        const saved: Record<
+          string,
+          { notificationId: string; signature: string }
+        > = rawSaved ? JSON.parse(rawSaved) : {};
+
+        const next: Record<
+          string,
+          { notificationId: string; signature: string }
+        > = {};
+
+        const now = new Date();
+        const todayKey = toDateKey(now);
+
+        for (const item of items) {
+          if (
+            item.completed ||
+            !item.startTime ||
+            item.date < todayKey
+          ) {
+            continue;
+          }
+
+          const [hourString, minuteString] =
+            item.startTime.split(':');
+          const hour = Number(hourString);
+          const minute = Number(minuteString);
+
+          if (
+            !Number.isInteger(hour) ||
+            !Number.isInteger(minute)
+          ) {
+            continue;
+          }
+
+          const start = fromDateKey(item.date);
+          start.setHours(hour, minute, 0, 0);
+
+          const notifyAt = new Date(
+            start.getTime() - 10 * 60 * 1000
+          );
+
+          if (notifyAt <= now) continue;
+
+          const signature = [
+            item.title,
+            item.date,
+            item.startTime,
+            item.endTime ?? '',
+          ].join('|');
+
+          const existing = saved[item.id];
+
+          if (
+            existing &&
+            existing.signature === signature
+          ) {
+            next[item.id] = existing;
+            continue;
+          }
+
+          if (existing?.notificationId) {
+            await Notifications.cancelScheduledNotificationAsync(
+              existing.notificationId
+            );
+          }
+
+          const notificationId =
+            await Notifications.scheduleNotificationAsync({
+              content: {
+                title: 'Upcoming with Chawgee',
+                body: `${item.title} starts in 10 minutes.`,
+                data: {
+                  type: 'timeline_upcoming',
+                  taskId: item.id,
+                  taskDate: item.date,
+                },
+                sound: true,
+              },
+              trigger: {
+                type:
+                  Notifications.SchedulableTriggerInputTypes.DATE,
+                date: notifyAt,
+              },
+            });
+
+          next[item.id] = {
+            notificationId,
+            signature,
+          };
+
+        }
+
+        for (const [taskId, record] of Object.entries(saved)) {
+          if (!next[taskId] && record.notificationId) {
+            try {
+              await Notifications.cancelScheduledNotificationAsync(
+                record.notificationId
+              );
+            } catch (cancelError) {
+              console.warn(
+                'Unable to cancel stale timeline notification:',
+                cancelError
+              );
+            }
+          }
+        }
+
+        await AsyncStorage.setItem(
+          scopedKey,
+          JSON.stringify(next)
+        );
+      } catch (error) {
+        console.warn(
+          'Unable to sync Chawgee timeline notifications:',
+          error
+        );
+      }
+    },
+    [ensureNotificationPermission]
+  );
+
+  const loadDashboardTimeline = useCallback(async () => {
+    try {
+      const [savedTasks, profile] = await Promise.all([
+        getTasks(),
+        loadUserProfile(),
+      ]);
+
+      let calendarEvents: CalendarTask[] = [];
+
+      if (profile.calendarSyncEnabled) {
+        try {
+          calendarEvents = await fetchDeviceEvents();
+        } catch (calendarError) {
+          console.warn(
+            'Unable to load calendar events for dashboard timeline:',
+            calendarError
+          );
+        }
+      }
+
+      const combined = [...savedTasks];
+
+      calendarEvents.forEach((event) => {
+        const duplicate = combined.some(
+          (task) =>
+            task.externalEventId === event.externalEventId ||
+            task.id === event.id
+        );
+
+        if (!duplicate) {
+          combined.push(event);
+        }
+      });
+
+      setTimelineItems(combined);
+      await syncTimelineNotifications(combined);
+    } catch (error) {
+      console.error('Failed to load dashboard timeline:', error);
+      setTimelineItems([]);
+    }
+  }, [syncTimelineNotifications]);;
+
   useFocusEffect(
     useCallback(() => {
       loadChawgeeBriefing();
-    }, [range.startDate, range.endDate])
+      loadDashboardTimeline();
+    }, [
+      range.startDate,
+      range.endDate,
+      loadDashboardTimeline,
+    ])
   );
 
-  const formatTrend = (
-    percentChange: number | null | undefined,
-    delta: number | undefined,
-    unit = '%'
-  ): string => {
-    if (percentChange == null) {
-      if (!delta) return 'No prior activity';
-      return delta > 0 ? 'New activity' : 'No change';
+
+
+  const toggleDashboardTaskCompletion = async (
+    task: CalendarTask
+  ) => {
+    if (task.source === 'calendar') return;
+
+    const completed = !task.completed;
+
+    Haptics.selectionAsync();
+
+    setTimelineItems((current) =>
+      current.map((item) =>
+        item.id === task.id
+          ? {
+              ...item,
+              completed,
+              completedAt: completed
+                ? new Date().toISOString()
+                : undefined,
+            }
+          : item
+      )
+    );
+
+    try {
+      await setTaskCompleted(task.id, completed);
+
+      if (completed) {
+        try {
+          const scopedKey = await getUserScopedStorageKey(
+            STORAGE_KEY_TIMELINE_NOTIFICATIONS
+          );
+          const rawSaved = await AsyncStorage.getItem(scopedKey);
+          const saved: Record<
+            string,
+            { notificationId: string; signature: string }
+          > = rawSaved ? JSON.parse(rawSaved) : {};
+          const scheduled = saved[task.id];
+
+          if (scheduled?.notificationId) {
+            await Notifications.cancelScheduledNotificationAsync(
+              scheduled.notificationId
+            );
+            delete saved[task.id];
+            await AsyncStorage.setItem(
+              scopedKey,
+              JSON.stringify(saved)
+            );
+          }
+        } catch (notificationError) {
+          console.warn(
+            'Unable to cancel completed task notification:',
+            notificationError
+          );
+        }
+      }
+    } catch (error) {
+      console.error(
+        'Failed to update task completion from dashboard:',
+        error
+      );
+
+      setTimelineItems((current) =>
+        current.map((item) =>
+          item.id === task.id
+            ? {
+                ...item,
+                completed: task.completed,
+                completedAt: task.completedAt,
+              }
+            : item
+        )
+      );
     }
-
-    const rounded = Math.abs(percentChange).toFixed(0);
-
-    if (percentChange > 0) return `↑ ${rounded}${unit}`;
-    if (percentChange < 0) return `↓ ${rounded}${unit}`;
-    return 'No change';
   };
 
-  const fitnessTrend = formatTrend(
-    rangeComparison?.trends.fitness.caloriesBurned.percentChange,
-    rangeComparison?.trends.fitness.caloriesBurned.delta
+  const dashboardTodayKey = toDateKey(timelineNow);
+
+  const dashboardDeck = useMemo(() => {
+    const nowMinutes =
+      timelineNow.getHours() * 60 + timelineNow.getMinutes();
+
+    const todaysItems = timelineItems.filter(
+      (item) => item.date === dashboardTodayKey
+    );
+
+    const deckItems: TimelineDeckItem[] = todaysItems
+      .map((item) => ({
+        item,
+        lifecycle: getTimelineLifecycle(item, nowMinutes),
+        start: timelineTimeToMinutes(item.startTime),
+        end: timelineTimeToMinutes(item.endTime),
+      }))
+      .sort((a, b) => {
+        if (a.start !== null && b.start !== null) {
+          return a.start - b.start;
+        }
+
+        if (a.start !== null) return -1;
+        if (b.start !== null) return 1;
+
+        const priorityRank = {
+          High: 0,
+          Medium: 1,
+          Low: 2,
+        };
+
+        return (
+          priorityRank[a.item.priority] -
+            priorityRank[b.item.priority] ||
+          a.item.createdAt.localeCompare(b.item.createdAt)
+        );
+      });
+
+    let focusIndex = deckItems.findIndex(
+      (entry) => entry.lifecycle === 'starting_soon'
+    );
+
+    if (focusIndex < 0) {
+      focusIndex = deckItems.findIndex(
+        (entry) => entry.lifecycle === 'in_progress'
+      );
+    }
+
+    if (focusIndex < 0) {
+      const unresolvedPassed = deckItems
+        .map((entry, index) => ({ entry, index }))
+        .filter(
+          ({ entry }) =>
+            entry.lifecycle === 'awaiting_outcome'
+        )
+        .pop();
+
+      focusIndex = unresolvedPassed?.index ?? -1;
+    }
+
+    if (focusIndex < 0) {
+      focusIndex = deckItems.findIndex(
+        (entry) => entry.lifecycle === 'upcoming'
+      );
+    }
+
+    if (focusIndex < 0 && deckItems.length > 0) {
+      focusIndex = 0;
+    }
+
+    return {
+      items: deckItems,
+      focusIndex,
+      focusId:
+        focusIndex >= 0
+          ? deckItems[focusIndex]?.item.id ?? null
+          : null,
+    };
+  }, [timelineItems, dashboardTodayKey, timelineNow]);
+
+  useEffect(() => {
+    if (dashboardDeck.items.length === 0) {
+      setDeckIndex(0);
+      previousAutoFocusId.current = null;
+      return;
+    }
+
+    const nextFocusId = dashboardDeck.focusId;
+
+    if (
+      nextFocusId &&
+      nextFocusId !== previousAutoFocusId.current
+    ) {
+      setDeckIndex(Math.max(dashboardDeck.focusIndex, 0));
+      setDeckManuallyMoved(false);
+      previousAutoFocusId.current = nextFocusId;
+    } else if (
+      deckIndex >= dashboardDeck.items.length
+    ) {
+      setDeckIndex(dashboardDeck.items.length - 1);
+    }
+  }, [
+    dashboardDeck.focusId,
+    dashboardDeck.focusIndex,
+    dashboardDeck.items.length,
+    deckIndex,
+  ]);
+
+  const moveDeck = useCallback(
+    (direction: 1 | -1) => {
+      if (dashboardDeck.items.length <= 1) return;
+
+      setDeckManuallyMoved(true);
+      setDeckIndex((current) => {
+        const next = current + direction;
+        return Math.max(
+          0,
+          Math.min(next, dashboardDeck.items.length - 1)
+        );
+      });
+
+      deckSwipe.setValue({ x: 0, y: 0 });
+      Haptics.selectionAsync();
+    },
+    [dashboardDeck.items.length, deckSwipe]
   );
 
-  const nutritionTrend = formatTrend(
-    rangeComparison?.trends.nutrition.loggingConsistencyPercent.percentChange,
-    rangeComparison?.trends.nutrition.loggingConsistencyPercent.delta
+  const deckPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          Math.abs(gesture.dx) > 10 &&
+          Math.abs(gesture.dx) > Math.abs(gesture.dy),
+        onPanResponderMove: Animated.event(
+          [null, { dx: deckSwipe.x }],
+          { useNativeDriver: false }
+        ),
+        onPanResponderRelease: (_, gesture) => {
+          if (gesture.dx < -55) {
+            moveDeck(1);
+          } else if (gesture.dx > 55) {
+            moveDeck(-1);
+          }
+
+          Animated.spring(deckSwipe, {
+            toValue: { x: 0, y: 0 },
+            useNativeDriver: false,
+            friction: 7,
+          }).start();
+        },
+      }),
+    [deckSwipe, moveDeck]
   );
 
-  const efficiencyTrend = formatTrend(
-    rangeComparison?.trends.efficiency.deepWorkHours.percentChange,
-    rangeComparison?.trends.efficiency.deepWorkHours.delta
-  );
-
-  const fitnessPrimary = `${rangeSummary?.fitness.caloriesBurned ?? 0} kcal burned`;
-
-  const fitnessSecondary =
-    (rangeSummary?.dayCount ?? 1) === 1
-      ? `${rangeSummary?.fitness.steps ?? 0} steps • ${
-          rangeSummary?.fitness.activeMinutes ?? 0
-        } active min`
-      : `Avg ${
-          rangeSummary?.fitness.averageStepsPerDay ?? 0
-        } steps/day • ${
-          rangeSummary?.fitness.workouts ?? 0
-        } workouts`;
-
-  const nutritionPrimary =
-    (rangeSummary?.dayCount ?? 1) === 1
-      ? `${rangeSummary?.nutrition.caloriesConsumed ?? 0} kcal eaten`
-      : `${rangeSummary?.nutrition.averageCaloriesPerDay ?? 0} kcal eaten/day`;
-
-  const nutritionSecondary =
-    (rangeSummary?.dayCount ?? 1) === 1
-      ? `Protein ${
-          rangeSummary?.nutrition.proteinConsumed ?? 0
-        }g / ${
-          rangeSummary?.nutrition.proteinGoal ?? 0
-        }g`
-      : `Protein avg ${
-          rangeSummary?.nutrition.averageProteinPerDay ?? 0
-        }g/day • ${
-          rangeSummary?.nutrition.loggingConsistencyPercent ?? 0
-        }% logged`;
-
-  const efficiencyPrimary =
-    `${rangeSummary?.efficiency.deepWorkHours ?? 0}h`;
-
-  const efficiencySecondary =
-    (rangeSummary?.dayCount ?? 1) === 1
-      ? `${
-          rangeSummary?.efficiency.deepWorkSessions ?? 0
-        } focus session${
-          (rangeSummary?.efficiency.deepWorkSessions ?? 0) === 1
-            ? ''
-            : 's'
-        } • Target ${
-          rangeSummary?.efficiency.deepWorkTargetHours ?? 0
-        }h`
-      : `Avg ${
-          rangeSummary?.efficiency.averageDeepWorkHoursPerDay ?? 0
-        }h/day • ${
-          rangeSummary?.efficiency.deepWorkGoalDays ?? 0
-        } goal days`;
+  const activeDeckItem =
+    dashboardDeck.items[deckIndex] ?? null;
 
 
-  const todayCalories = rangeSummary?.nutrition.caloriesConsumed ?? 0;
-  const calorieProgress =
-    targetCalories > 0
-      ? Math.min(todayCalories / targetCalories, 1)
-      : 0;
-
-  const todayWorkouts = rangeSummary?.fitness.workouts ?? 0;
-  const workoutProgress = Math.min(todayWorkouts, 1);
-
-  const deepWorkHours = rangeSummary?.efficiency.deepWorkHours ?? 0;
-  const deepWorkTarget =
-    rangeSummary?.efficiency.deepWorkTargetHours ?? 0;
-  const deepWorkProgress =
-    deepWorkTarget > 0
-      ? Math.min(deepWorkHours / deepWorkTarget, 1)
-      : 0;
 
   return (
     <SafeAreaView
@@ -1162,172 +1587,380 @@ export default function DashboardScreen() {
         </View>
 
         <View style={styles.sectionTitleRow}>
-          <Text
-            style={[
-              styles.dashboardSectionTitle,
-              { color: theme.textPrimary },
-            ]}
-          >
-            Today’s Progress
-          </Text>
+          <View>
+            <Text
+              style={[
+                styles.dashboardSectionTitle,
+                { color: theme.textPrimary },
+              ]}
+            >
+              Daily Timeline
+            </Text>
+            <Text
+              style={[
+                styles.timelineDeckSubtitle,
+                { color: theme.textSecondary },
+              ]}
+            >
+              {dashboardDeck.items.length > 0
+                ? `${deckIndex + 1} of ${dashboardDeck.items.length} today`
+                : 'Your day at a glance'}
+            </Text>
+          </View>
 
-          <TouchableOpacity onPress={() => applyPreset('today')}>
+          <TouchableOpacity
+            onPress={() => router.push('/(tabs)/efficiency')}
+          >
             <Text
               style={[
                 styles.seeAllText,
                 { color: theme.primaryAccent },
               ]}
             >
-              See All
+              Manage Tasks
             </Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.progressGrid}>
+        {dashboardDeck.items.length === 0 ? (
           <View
             style={[
-              styles.progressTile,
+              styles.timelineCard,
               {
-                backgroundColor: `${theme.nutritionAccent}12`,
-                borderColor: `${theme.nutritionAccent}28`,
+                backgroundColor: theme.cardBackground,
+                borderColor: theme.border,
               },
             ]}
           >
-            <Ionicons
-              name="flame"
-              size={24}
-              color={theme.nutritionAccent}
-            />
-            <Text
-              style={[
-                styles.progressValue,
-                { color: theme.textPrimary },
-              ]}
-            >
-              {todayCalories.toLocaleString()}
-            </Text>
-            <Text
-              style={[
-                styles.progressLabel,
-                { color: theme.textSecondary },
-              ]}
-            >
-              / {targetCalories.toLocaleString()} cal
-            </Text>
-            <View
-              style={[
-                styles.progressTrack,
-                { backgroundColor: `${theme.nutritionAccent}20` },
-              ]}
-            >
-              <View
-                style={[
-                  styles.progressFill,
-                  {
-                    width: `${calorieProgress * 100}%`,
-                    backgroundColor: theme.nutritionAccent,
-                  },
-                ]}
+            <View style={styles.timelineEmpty}>
+              <Ionicons
+                name="calendar-outline"
+                size={24}
+                color={theme.textSecondary}
               />
+              <Text
+                style={[
+                  styles.timelineEmptyTitle,
+                  { color: theme.textPrimary },
+                ]}
+              >
+                No tasks or events today
+              </Text>
+              <Text
+                style={[
+                  styles.timelineEmptyText,
+                  { color: theme.textSecondary },
+                ]}
+              >
+                Add tasks from Efficiency and they will appear here.
+              </Text>
             </View>
           </View>
+        ) : (
+          <View style={styles.timelineDeckShell}>
+            <View style={styles.timelineDeckStage}>
+              {dashboardDeck.items
+                .slice(deckIndex + 1, deckIndex + 3)
+                .reverse()
+                .map((entry, reverseIndex, visibleBehind) => {
+                  const depth =
+                    Math.min(
+                      dashboardDeck.items.length - deckIndex - 1,
+                      2
+                    ) - reverseIndex;
 
-          <View
-            style={[
-              styles.progressTile,
-              {
-                backgroundColor: `${theme.fitnessAccent}12`,
-                borderColor: `${theme.fitnessAccent}28`,
-              },
-            ]}
-          >
-            <Ionicons
-              name="barbell"
-              size={24}
-              color={theme.fitnessAccent}
-            />
-            <Text
-              style={[
-                styles.progressValue,
-                { color: theme.textPrimary },
-              ]}
-            >
-              {todayWorkouts}
-            </Text>
-            <Text
-              style={[
-                styles.progressLabel,
-                { color: theme.textSecondary },
-              ]}
-            >
-              Workouts
-            </Text>
-            <View
-              style={[
-                styles.progressTrack,
-                { backgroundColor: `${theme.fitnessAccent}20` },
-              ]}
-            >
-              <View
-                style={[
-                  styles.progressFill,
-                  {
-                    width: `${workoutProgress * 100}%`,
-                    backgroundColor: theme.fitnessAccent,
-                  },
-                ]}
-              />
-            </View>
-          </View>
+                  return (
+                    <View
+                      key={`behind-${entry.item.id}`}
+                      pointerEvents="none"
+                      style={[
+                        styles.timelineStackCard,
+                        styles.timelineStackBehind,
+                        {
+                          backgroundColor: theme.cardBackground,
+                          borderColor: theme.border,
+                          top: depth * 14,
+                          left: depth * 10,
+                          right: depth * 10,
+                          opacity: 1 - depth * 0.18,
+                          zIndex: 3 - depth,
+                        },
+                      ]}
+                    >
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.timelineBehindTitle,
+                          { color: theme.textSecondary },
+                        ]}
+                      >
+                        {entry.item.title}
+                      </Text>
+                    </View>
+                  );
+                })}
 
-          <View
-            style={[
-              styles.progressTile,
-              {
-                backgroundColor: `${theme.efficiencyAccent}12`,
-                borderColor: `${theme.efficiencyAccent}28`,
-              },
-            ]}
-          >
-            <Ionicons
-              name="time"
-              size={24}
-              color={theme.efficiencyAccent}
-            />
-            <Text
-              style={[
-                styles.progressValue,
-                { color: theme.textPrimary },
-              ]}
-            >
-              {deepWorkHours.toFixed(1)} / {deepWorkTarget.toFixed(1)}
-            </Text>
-            <Text
-              style={[
-                styles.progressLabel,
-                { color: theme.textSecondary },
-              ]}
-            >
-              Deep Work
-            </Text>
-            <View
-              style={[
-                styles.progressTrack,
-                { backgroundColor: `${theme.efficiencyAccent}20` },
-              ]}
-            >
-              <View
-                style={[
-                  styles.progressFill,
-                  {
-                    width: `${deepWorkProgress * 100}%`,
-                    backgroundColor: theme.efficiencyAccent,
-                  },
-                ]}
-              />
+              {activeDeckItem && (
+                <Animated.View
+                  {...deckPanResponder.panHandlers}
+                  style={[
+                    styles.timelineStackCard,
+                    styles.timelineFrontCard,
+                    {
+                      backgroundColor: theme.cardBackground,
+                      borderColor:
+                        activeDeckItem.lifecycle === 'starting_soon'
+                          ? theme.primaryAccent
+                          : activeDeckItem.lifecycle === 'in_progress'
+                            ? theme.success
+                            : theme.border,
+                      transform: [
+                        { translateX: deckSwipe.x },
+                        {
+                          rotate: deckSwipe.x.interpolate({
+                            inputRange: [-180, 0, 180],
+                            outputRange: ['-3deg', '0deg', '3deg'],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                >
+                  <View style={styles.timelineDeckTopRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={[
+                          styles.timelineLifecycleLabel,
+                          {
+                            color:
+                              activeDeckItem.lifecycle === 'starting_soon'
+                                ? theme.primaryAccent
+                                : activeDeckItem.lifecycle === 'in_progress'
+                                  ? theme.success
+                                  : activeDeckItem.lifecycle ===
+                                      'awaiting_outcome'
+                                    ? theme.nutritionAccent
+                                    : theme.textSecondary,
+                          },
+                        ]}
+                      >
+                        {getLifecycleLabel(
+                          activeDeckItem.lifecycle
+                        )}
+                      </Text>
+
+                      <Text
+                        style={[
+                          styles.timelineDeckTitle,
+                          {
+                            color: theme.textPrimary,
+                            textDecorationLine:
+                              activeDeckItem.item.completed
+                                ? 'line-through'
+                                : 'none',
+                          },
+                        ]}
+                      >
+                        {activeDeckItem.item.title}
+                      </Text>
+
+                      <Text
+                        style={[
+                          styles.timelineDeckTime,
+                          { color: theme.textSecondary },
+                        ]}
+                      >
+                        {activeDeckItem.start !== null &&
+                        activeDeckItem.end !== null
+                          ? `${formatTimelineTime(
+                              activeDeckItem.item.startTime
+                            )} - ${formatTimelineTime(
+                              activeDeckItem.item.endTime
+                            )}`
+                          : `${activeDeckItem.item.category} • ${activeDeckItem.item.priority} priority`}
+                      </Text>
+                    </View>
+
+                    {activeDeckItem.item.source === 'calendar' ? (
+                      <Ionicons
+                        name="calendar-outline"
+                        size={22}
+                        color={theme.primaryAccent}
+                      />
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.timelineDeckCheck}
+                        onPress={() =>
+                          toggleDashboardTaskCompletion(
+                            activeDeckItem.item
+                          )
+                        }
+                        hitSlop={10}
+                      >
+                        <Ionicons
+                          name={
+                            activeDeckItem.item.completed
+                              ? 'checkmark-circle'
+                              : 'ellipse-outline'
+                          }
+                          size={28}
+                          color={
+                            activeDeckItem.item.completed
+                              ? theme.success
+                              : theme.textSecondary
+                          }
+                        />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {activeDeckItem.lifecycle ===
+                    'awaiting_outcome' && (
+                    <View
+                      style={[
+                        styles.timelineOutcomePrompt,
+                        {
+                          backgroundColor:
+                            `${theme.nutritionAccent}10`,
+                          borderColor:
+                            `${theme.nutritionAccent}35`,
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name="help-circle-outline"
+                        size={18}
+                        color={theme.nutritionAccent}
+                      />
+                      <Text
+                        style={[
+                          styles.timelineOutcomeText,
+                          { color: theme.textSecondary },
+                        ]}
+                      >
+                        This time has passed. Chawgee will eventually
+                        ask whether you completed or missed it.
+                      </Text>
+                    </View>
+                  )}
+
+                  <View style={styles.timelineDeckFooter}>
+                    <TouchableOpacity
+                      disabled={deckIndex === 0}
+                      onPress={() => moveDeck(-1)}
+                      style={[
+                        styles.timelineDeckNavButton,
+                        {
+                          borderColor: theme.border,
+                          opacity: deckIndex === 0 ? 0.35 : 1,
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name="chevron-back"
+                        size={17}
+                        color={theme.textSecondary}
+                      />
+                      <Text
+                        style={[
+                          styles.timelineDeckNavText,
+                          { color: theme.textSecondary },
+                        ]}
+                      >
+                        Previous
+                      </Text>
+                    </TouchableOpacity>
+
+                    <Text
+                      style={[
+                        styles.timelineSwipeHint,
+                        { color: theme.textSecondary },
+                      ]}
+                    >
+                      Swipe to review your day
+                    </Text>
+
+                    <TouchableOpacity
+                      disabled={
+                        deckIndex >=
+                        dashboardDeck.items.length - 1
+                      }
+                      onPress={() => moveDeck(1)}
+                      style={[
+                        styles.timelineDeckNavButton,
+                        {
+                          borderColor: theme.border,
+                          opacity:
+                            deckIndex >=
+                            dashboardDeck.items.length - 1
+                              ? 0.35
+                              : 1,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.timelineDeckNavText,
+                          { color: theme.textSecondary },
+                        ]}
+                      >
+                        Next
+                      </Text>
+                      <Ionicons
+                        name="chevron-forward"
+                        size={17}
+                        color={theme.textSecondary}
+                      />
+                    </TouchableOpacity>
+                  </View>
+
+                  {deckManuallyMoved &&
+                    dashboardDeck.focusIndex !== deckIndex && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          setDeckIndex(
+                            Math.max(
+                              dashboardDeck.focusIndex,
+                              0
+                            )
+                          );
+                          setDeckManuallyMoved(false);
+                        }}
+                        style={styles.returnToNowButton}
+                      >
+                        <Text
+                          style={[
+                            styles.returnToNowText,
+                            { color: theme.primaryAccent },
+                          ]}
+                        >
+                          Return to current / upcoming
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                </Animated.View>
+              )}
+            </View>
+
+            <View style={styles.timelineStackIndicator}>
+              {dashboardDeck.items.slice(0, 6).map((entry, index) => (
+                <View
+                  key={`dot-${entry.item.id}`}
+                  style={[
+                    styles.timelineStackDot,
+                    {
+                      width: index === deckIndex ? 18 : 6,
+                      backgroundColor:
+                        index === deckIndex
+                          ? theme.primaryAccent
+                          : theme.border,
+                    },
+                  ]}
+                />
+              ))}
             </View>
           </View>
-        </View>
+        )}
 
         <Text
           style={[
@@ -1940,46 +2573,178 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  progressGrid: {
-    flexDirection: 'row',
+  timelineCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 14,
+  },
+
+  timelineEmpty: {
+    minHeight: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 24,
+  },
+
+  timelineEmptyTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+
+  timelineEmptyText: {
+    fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+
+  timelineDeckSubtitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+
+  timelineDeckShell: {
     gap: 10,
   },
 
-  progressTile: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 150,
-    paddingHorizontal: 12,
-    paddingVertical: 14,
-    borderRadius: 18,
+  timelineDeckStage: {
+    minHeight: 245,
+    position: 'relative',
+    paddingTop: 30,
+  },
+
+  timelineStackCard: {
+    position: 'absolute',
     borderWidth: 1,
+    borderRadius: 20,
+  },
+
+  timelineStackBehind: {
+    height: 170,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  },
+
+  timelineBehindTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
+  timelineFrontCard: {
+    left: 0,
+    right: 0,
+    top: 0,
+    minHeight: 215,
+    padding: 16,
+    zIndex: 10,
+  },
+
+  timelineDeckTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+
+  timelineLifecycleLabel: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.65,
+  },
+
+  timelineDeckTitle: {
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: '900',
+    marginTop: 6,
+  },
+
+  timelineDeckTime: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '700',
+    marginTop: 3,
+  },
+
+  timelineDeckCheck: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  timelineOutcomePrompt: {
+    marginTop: 14,
+    borderRadius: 13,
+    borderWidth: 1,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+
+  timelineOutcomeText: {
+    flex: 1,
+    fontSize: 10,
+    lineHeight: 15,
+    fontWeight: '700',
+  },
+
+  timelineDeckFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+    marginTop: 18,
+  },
+
+  timelineDeckNavButton: {
+    minHeight: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+  },
+
+  timelineDeckNavText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+
+  timelineSwipeHint: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 9,
+    fontWeight: '700',
+  },
+
+  returnToNowButton: {
+    alignSelf: 'center',
+    marginTop: 10,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+  },
+
+  returnToNowText: {
+    fontSize: 10,
+    fontWeight: '900',
+  },
+
+  timelineStackIndicator: {
+    minHeight: 10,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 5,
   },
 
-  progressValue: {
-    fontSize: 18,
-    fontWeight: '900',
-    textAlign: 'center',
-  },
-
-  progressLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-
-  progressTrack: {
-    width: '100%',
-    height: 7,
-    borderRadius: 999,
-    overflow: 'hidden',
-    marginTop: 7,
-  },
-
-  progressFill: {
-    height: '100%',
+  timelineStackDot: {
+    height: 6,
     borderRadius: 999,
   },
 

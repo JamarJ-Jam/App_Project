@@ -28,9 +28,13 @@ import {
   loadUserProfile,
 } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/userProfileStorage';
 import {
+  addTask,
   CalendarTask,
+  deleteTask as deleteStoredTask,
   getTasks,
-  saveTasks,
+  setTaskCompleted,
+  TaskCategory,
+  TaskPriority,
 } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/efficiencyStorage';
 import {
   addManualDeepWorkSession,
@@ -40,17 +44,6 @@ import {
   startDeepWorkSession,
   stopDeepWorkSession,
 } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/deepWorkStorage';
-
-type TaskPriority = 'High' | 'Medium' | 'Low';
-
-interface TaskItem {
-  id: string;
-  title: string;
-  priority: TaskPriority;
-  completed: boolean;
-  timeBlock?: string;
-  date: string;
-}
 
 const toLocalDateKey = (date = new Date()): string => {
   const year = date.getFullYear();
@@ -88,27 +81,31 @@ const formatTimerDisplay = (seconds: number) => {
     .padStart(2, '0')}`;
 };
 
-const taskToCalendarTask = (task: TaskItem): CalendarTask => ({
-  id: task.id,
-  title: task.title,
-  category: 'Project',
-  startTime: task.timeBlock?.split(' - ')[0] || '',
-  endTime: task.timeBlock?.split(' - ')[1] || '',
-  completed: task.completed,
-  date: task.date,
+const TIME_OPTIONS = Array.from({ length: 96 }, (_, index) => {
+  const totalMinutes = index * 15;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 });
 
-const calendarTaskToTask = (task: CalendarTask): TaskItem => ({
-  id: task.id,
-  title: task.title,
-  priority: 'Medium',
-  completed: task.completed,
-  timeBlock:
-    task.startTime && task.endTime
-      ? `${task.startTime} - ${task.endTime}`
-      : undefined,
-  date: task.date,
-});
+const formatTaskTime = (value?: string): string => {
+  if (!value) return 'Select time';
+
+  const [hourString, minuteString] = value.split(':');
+  const hour = Number(hourString);
+  const minute = Number(minuteString);
+
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return value;
+  }
+
+  const suffix = hour >= 12 ? 'PM' : 'AM';
+  const displayHour = hour % 12 || 12;
+
+  return `${displayHour}:${String(minute).padStart(2, '0')} ${suffix}`;
+};
+
 
 export default function EfficiencyScreen() {
   const { theme = LightTheme } = useTheme() || {};
@@ -133,13 +130,23 @@ export default function EfficiencyScreen() {
   const [calendarSyncActive, setCalendarSyncActive] =
     useState(false);
 
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [tasks, setTasks] = useState<CalendarTask[]>([]);
+  const [taskBoardExpanded, setTaskBoardExpanded] = useState(false);
 
   const [taskModalVisible, setTaskModalVisible] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskPriority, setNewTaskPriority] =
     useState<TaskPriority>('Medium');
-  const [newTaskTime, setNewTaskTime] = useState('');
+  const [newTaskCategory, setNewTaskCategory] =
+    useState<TaskCategory>('Project');
+  const [newTaskEstimatedMinutes, setNewTaskEstimatedMinutes] =
+    useState('');
+  const [newTaskStartTime, setNewTaskStartTime] = useState('');
+  const [newTaskEndTime, setNewTaskEndTime] = useState('');
+  const [newTaskNotes, setNewTaskNotes] = useState('');
+  const [timePickerVisible, setTimePickerVisible] = useState(false);
+  const [timePickerTarget, setTimePickerTarget] =
+    useState<'start' | 'end'>('start');
 
   const [manualLogVisible, setManualLogVisible] = useState(false);
   const [manualMinutes, setManualMinutes] = useState('');
@@ -148,6 +155,7 @@ export default function EfficiencyScreen() {
   useEffect(() => {
     if (quickAction !== 'addTask') return;
 
+    setTaskBoardExpanded(true);
     setTaskModalVisible(true);
     router.setParams({ quickAction: '' });
   }, [quickAction]);
@@ -174,7 +182,7 @@ export default function EfficiencyScreen() {
         Boolean(profile.calendarSyncEnabled)
       );
 
-      setTasks(savedTasks.map(calendarTaskToTask));
+      setTasks(savedTasks);
       setDeepWorkSessions(sessions);
 
       if (activeSession) {
@@ -236,22 +244,6 @@ export default function EfficiencyScreen() {
     targetMinutes > 0
       ? Math.min((loggedMinutes / targetMinutes) * 100, 100)
       : 0;
-
-  const persistTasks = async (nextTasks: TaskItem[]) => {
-    setTasks(nextTasks);
-
-    try {
-      await saveTasks(
-        nextTasks.map(taskToCalendarTask)
-      );
-    } catch (error) {
-      console.error('Failed to save tasks:', error);
-      Alert.alert(
-        'Unable to save',
-        'Your task changes could not be saved.'
-      );
-    }
-  };
 
   const toggleTimer = async () => {
     Haptics.impactAsync(
@@ -338,16 +330,77 @@ export default function EfficiencyScreen() {
     }
   };
 
-  const toggleTaskCompletion = (id: string) => {
+  const toggleTaskCompletion = async (id: string) => {
     Haptics.selectionAsync();
 
-    persistTasks(
-      tasks.map((task) =>
-        task.id === id
-          ? { ...task, completed: !task.completed }
-          : task
+    const task = tasks.find((item) => item.id === id);
+    if (!task) return;
+
+    const completed = !task.completed;
+
+    // Optimistic UI update so the interaction feels immediate.
+    setTasks((current) =>
+      current.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              completed,
+              completedAt: completed
+                ? new Date().toISOString()
+                : undefined,
+            }
+          : item
       )
     );
+
+    try {
+      await setTaskCompleted(id, completed);
+    } catch (error) {
+      console.error('Failed to update task:', error);
+      await loadEfficiencyData();
+      Alert.alert(
+        'Unable to update task',
+        'Your task status could not be saved.'
+      );
+    }
+  };
+
+  const openTimePicker = (target: 'start' | 'end') => {
+    setTimePickerTarget(target);
+    setTimePickerVisible(true);
+  };
+
+  const selectTaskTime = (time: string) => {
+    if (timePickerTarget === 'start') {
+      setNewTaskStartTime(time);
+
+      // Clear an invalid end time instead of silently saving a bad block.
+      if (newTaskEndTime && time >= newTaskEndTime) {
+        setNewTaskEndTime('');
+      }
+    } else {
+      if (newTaskStartTime && time <= newTaskStartTime) {
+        Alert.alert(
+          'Choose a later time',
+          'The end time must be later than the start time.'
+        );
+        return;
+      }
+
+      setNewTaskEndTime(time);
+    }
+
+    setTimePickerVisible(false);
+  };
+
+  const resetTaskForm = () => {
+    setNewTaskTitle('');
+    setNewTaskPriority('Medium');
+    setNewTaskCategory('Project');
+    setNewTaskEstimatedMinutes('');
+    setNewTaskStartTime('');
+    setNewTaskEndTime('');
+    setNewTaskNotes('');
   };
 
   const handleAddTask = async () => {
@@ -359,37 +412,265 @@ export default function EfficiencyScreen() {
       return;
     }
 
-    const newTask: TaskItem = {
-      id: Date.now().toString(),
-      title: newTaskTitle.trim(),
-      priority: newTaskPriority,
-      completed: false,
-      timeBlock: newTaskTime.trim() || undefined,
-      date: todayKey,
-    };
+    const estimatedMinutes = newTaskEstimatedMinutes.trim()
+      ? Math.round(Number(newTaskEstimatedMinutes))
+      : undefined;
 
-    await persistTasks([...tasks, newTask]);
+    if (
+      estimatedMinutes !== undefined &&
+      (!Number.isFinite(estimatedMinutes) || estimatedMinutes <= 0)
+    ) {
+      Alert.alert(
+        'Check estimated duration',
+        'Enter a duration greater than 0 minutes.'
+      );
+      return;
+    }
 
-    setNewTaskTitle('');
-    setNewTaskTime('');
-    setNewTaskPriority('Medium');
-    setTaskModalVisible(false);
+    if (
+      newTaskStartTime &&
+      newTaskEndTime &&
+      newTaskEndTime <= newTaskStartTime
+    ) {
+      Alert.alert(
+        'Check task time',
+        'The end time must be later than the start time.'
+      );
+      return;
+    }
 
-    Haptics.notificationAsync(
-      Haptics.NotificationFeedbackType.Success
-    );
+    try {
+      const saved = await addTask({
+        title: newTaskTitle.trim(),
+        category: newTaskCategory,
+        priority: newTaskPriority,
+        date: todayKey,
+        startTime: newTaskStartTime || undefined,
+        endTime: newTaskEndTime || undefined,
+        estimatedMinutes,
+        completed: false,
+        notes: newTaskNotes.trim() || undefined,
+        source: 'manual',
+      });
+
+      setTasks((current) => [...current, saved]);
+      resetTaskForm();
+      setTaskModalVisible(false);
+
+      await Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Success
+      );
+    } catch (error) {
+      console.error('Failed to create task:', error);
+      Alert.alert(
+        'Unable to save',
+        'Your task could not be created.'
+      );
+    }
   };
 
-  const deleteTask = (id: string) => {
+  const deleteTask = async (id: string) => {
     Haptics.impactAsync(
       Haptics.ImpactFeedbackStyle.Light
     );
 
-    persistTasks(tasks.filter((task) => task.id !== id));
+    const previousTasks = tasks;
+    setTasks((current) => current.filter((task) => task.id !== id));
+
+    try {
+      await deleteStoredTask(id);
+    } catch (error) {
+      console.error('Failed to delete task:', error);
+      setTasks(previousTasks);
+      Alert.alert(
+        'Unable to delete',
+        'Your task could not be deleted.'
+      );
+    }
   };
 
-  const todaysTasks = tasks.filter(
-    (task) => task.date === todayKey
+  const todaysTasks = useMemo(
+    () => tasks.filter((task) => task.date === todayKey),
+    [tasks, todayKey]
+  );
+
+  const priorityRank: Record<TaskPriority, number> = {
+    High: 0,
+    Medium: 1,
+    Low: 2,
+  };
+
+  const scheduledTasks = useMemo(
+    () =>
+      todaysTasks
+        .filter((task) => !task.completed && Boolean(task.startTime))
+        .sort((a, b) => {
+          const timeCompare = (a.startTime || '').localeCompare(
+            b.startTime || ''
+          );
+
+          if (timeCompare !== 0) return timeCompare;
+
+          return priorityRank[a.priority] - priorityRank[b.priority];
+        }),
+    [todaysTasks]
+  );
+
+  const priorityTasks = useMemo(
+    () =>
+      todaysTasks
+        .filter((task) => !task.completed && !task.startTime)
+        .sort((a, b) => {
+          const priorityCompare =
+            priorityRank[a.priority] - priorityRank[b.priority];
+
+          if (priorityCompare !== 0) return priorityCompare;
+
+          if (a.dueDate && b.dueDate) {
+            const dueCompare = a.dueDate.localeCompare(b.dueDate);
+            if (dueCompare !== 0) return dueCompare;
+          } else if (a.dueDate) {
+            return -1;
+          } else if (b.dueDate) {
+            return 1;
+          }
+
+          return a.createdAt.localeCompare(b.createdAt);
+        }),
+    [todaysTasks]
+  );
+
+  const completedTasks = useMemo(
+    () =>
+      todaysTasks
+        .filter((task) => task.completed)
+        .sort((a, b) =>
+          (b.completedAt || '').localeCompare(a.completedAt || '')
+        ),
+    [todaysTasks]
+  );
+
+  const completedTaskCount = completedTasks.length;
+  const remainingTaskCount =
+    scheduledTasks.length + priorityTasks.length;
+
+  const remainingEstimatedMinutes = useMemo(
+    () =>
+      [...scheduledTasks, ...priorityTasks].reduce(
+        (total, task) => total + (task.estimatedMinutes || 0),
+        0
+      ),
+    [scheduledTasks, priorityTasks]
+  );
+
+  const formatDurationSummary = (minutes: number): string => {
+    if (minutes <= 0) return 'No duration estimates';
+
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+
+    if (hours > 0 && remainingMinutes > 0) {
+      return `${hours}h ${remainingMinutes}m remaining`;
+    }
+
+    if (hours > 0) {
+      return `${hours}h remaining`;
+    }
+
+    return `${remainingMinutes}m remaining`;
+  };
+
+  const renderPlanTask = (
+    task: CalendarTask,
+    showSchedule = false
+  ) => (
+    <View
+      key={task.id}
+      style={[
+        styles.planTaskRow,
+        { borderBottomColor: theme.border },
+      ]}
+    >
+      <TouchableOpacity
+        style={styles.planTaskMain}
+        onPress={() => toggleTaskCompletion(task.id)}
+      >
+        <Ionicons
+          name={
+            task.completed
+              ? 'checkmark-circle'
+              : 'ellipse-outline'
+          }
+          size={22}
+          color={
+            task.completed
+              ? theme.efficiencyAccent
+              : theme.textSecondary
+          }
+        />
+
+        <View style={{ flex: 1 }}>
+          <Text
+            style={[
+              styles.planTaskTitle,
+              {
+                color: task.completed
+                  ? theme.textSecondary
+                  : theme.textPrimary,
+                textDecorationLine: task.completed
+                  ? 'line-through'
+                  : 'none',
+              },
+            ]}
+          >
+            {task.title}
+          </Text>
+
+          <View style={styles.planTaskMetaRow}>
+            {showSchedule && task.startTime && (
+              <Text
+                style={[
+                  styles.planTaskMeta,
+                  { color: theme.efficiencyAccent },
+                ]}
+              >
+                {formatTaskTime(task.startTime)}
+                {task.endTime
+                  ? ` - ${formatTaskTime(task.endTime)}`
+                  : ''}
+              </Text>
+            )}
+
+            {!showSchedule && task.estimatedMinutes && (
+              <Text
+                style={[
+                  styles.planTaskMeta,
+                  { color: theme.textSecondary },
+                ]}
+              >
+                {task.estimatedMinutes} min
+              </Text>
+            )}
+
+            <Text
+              style={[
+                styles.planPriority,
+                {
+                  color:
+                    task.priority === 'High'
+                      ? theme.danger
+                      : task.priority === 'Medium'
+                        ? theme.warning
+                        : theme.success,
+                },
+              ]}
+            >
+              {task.priority.toUpperCase()}
+            </Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+    </View>
   );
 
   return (
@@ -510,6 +791,54 @@ export default function EfficiencyScreen() {
             </Text>
           </View>
 
+          {activeSessionStartedAt ? (
+            <View
+              style={[
+                styles.collapsedTimerBox,
+                {
+                  backgroundColor: theme.background,
+                  borderColor: theme.border,
+                },
+              ]}
+            >
+              <View>
+                <Text
+                  style={[
+                    styles.timerLabel,
+                    { color: theme.textSecondary },
+                  ]}
+                >
+                  FOCUS SESSION ACTIVE
+                </Text>
+                <Text
+                  style={[
+                    styles.timerDisplay,
+                    { color: theme.textPrimary },
+                  ]}
+                >
+                  {formatTimerDisplay(secondsActive)}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.timerBtn,
+                  { backgroundColor: theme.danger },
+                ]}
+                onPress={toggleTimer}
+              >
+                <Ionicons
+                  name="stop"
+                  size={18}
+                  color="#FFFFFF"
+                />
+                <Text style={styles.timerBtnText}>
+                  Stop & Save
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
           <View
             style={[
               styles.progressBarTrack,
@@ -611,6 +940,177 @@ export default function EfficiencyScreen() {
               Log focus time manually
             </Text>
           </TouchableOpacity>
+            </>
+          )}
+        </View>
+
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: theme.cardBackground,
+              borderColor: theme.border,
+            },
+          ]}
+        >
+          <View style={styles.planHeader}>
+            <View style={styles.headerLeft}>
+              <View
+                style={[
+                  styles.iconFrame,
+                  {
+                    backgroundColor:
+                      `${theme.efficiencyAccent}18`,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name="today-outline"
+                  size={20}
+                  color={theme.efficiencyAccent}
+                />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={[
+                    styles.cardTitle,
+                    { color: theme.textPrimary },
+                  ]}
+                >
+                  Today&apos;s Plan
+                </Text>
+
+                <Text
+                  style={[
+                    styles.planSummary,
+                    { color: theme.textSecondary },
+                  ]}
+                >
+                  {completedTaskCount} of {todaysTasks.length} completed
+                  {' • '}
+                  {formatDurationSummary(
+                    remainingEstimatedMinutes
+                  )}
+                </Text>
+              </View>
+            </View>
+
+            <View
+              style={[
+                styles.remainingBadge,
+                {
+                  backgroundColor:
+                    `${theme.efficiencyAccent}18`,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.remainingBadgeText,
+                  { color: theme.efficiencyAccent },
+                ]}
+              >
+                {remainingTaskCount} LEFT
+              </Text>
+            </View>
+          </View>
+
+          {todaysTasks.length === 0 ? (
+            <View style={styles.planEmptyState}>
+              <Ionicons
+                name="checkmark-done-outline"
+                size={24}
+                color={theme.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.emptyText,
+                  {
+                    color: theme.textSecondary,
+                    textAlign: 'center',
+                  },
+                ]}
+              >
+                Nothing planned yet. Add a task to start shaping
+                your day.
+              </Text>
+            </View>
+          ) : (
+            <>
+              {scheduledTasks.length > 0 && (
+                <View style={styles.planGroup}>
+                  <View style={styles.planGroupHeader}>
+                    <Ionicons
+                      name="time-outline"
+                      size={15}
+                      color={theme.efficiencyAccent}
+                    />
+                    <Text
+                      style={[
+                        styles.planGroupTitle,
+                        { color: theme.textSecondary },
+                      ]}
+                    >
+                      SCHEDULED / UP NEXT
+                    </Text>
+                  </View>
+
+                  {scheduledTasks.map((task) =>
+                    renderPlanTask(task, true)
+                  )}
+                </View>
+              )}
+
+              {priorityTasks.length > 0 && (
+                <View style={styles.planGroup}>
+                  <View style={styles.planGroupHeader}>
+                    <Ionicons
+                      name="flag-outline"
+                      size={15}
+                      color={theme.efficiencyAccent}
+                    />
+                    <Text
+                      style={[
+                        styles.planGroupTitle,
+                        { color: theme.textSecondary },
+                      ]}
+                    >
+                      PRIORITY TASKS
+                    </Text>
+                  </View>
+
+                  {priorityTasks.map((task) =>
+                    renderPlanTask(task)
+                  )}
+                </View>
+              )}
+
+              {completedTasks.length > 0 && (
+                <View style={styles.planGroup}>
+                  <View style={styles.planGroupHeader}>
+                    <Ionicons
+                      name="checkmark-done-outline"
+                      size={15}
+                      color={theme.success}
+                    />
+                    <Text
+                      style={[
+                        styles.planGroupTitle,
+                        { color: theme.textSecondary },
+                      ]}
+                    >
+                      COMPLETED
+                    </Text>
+                  </View>
+
+                  {completedTasks.map((task) =>
+                    renderPlanTask(task, Boolean(task.startTime))
+                  )}
+                </View>
+              )}
+            </>
+          )}
         </View>
 
         <View
@@ -679,26 +1179,60 @@ export default function EfficiencyScreen() {
             SCHEDULE & TASK BOARD
           </Text>
 
-          <TouchableOpacity
-            style={[
-              styles.addBtn,
-              { backgroundColor: theme.efficiencyAccent },
-            ]}
-            onPress={() => setTaskModalVisible(true)}
-          >
-            <Ionicons
-              name="add"
-              size={16}
-              color="#FFFFFF"
-            />
-            <Text style={styles.addBtnText}>
-              Add Task
-            </Text>
-          </TouchableOpacity>
+          <View style={styles.taskBoardActions}>
+            <TouchableOpacity
+              style={[
+                styles.boardToggleBtn,
+                { borderColor: theme.border },
+              ]}
+              onPress={() =>
+                setTaskBoardExpanded((current) => !current)
+              }
+            >
+              <Ionicons
+                name={
+                  taskBoardExpanded
+                    ? 'chevron-up'
+                    : 'chevron-down'
+                }
+                size={16}
+                color={theme.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.boardToggleText,
+                  { color: theme.textSecondary },
+                ]}
+              >
+                {taskBoardExpanded ? 'Collapse' : 'View'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.addBtn,
+                { backgroundColor: theme.efficiencyAccent },
+              ]}
+              onPress={() => {
+                setTaskBoardExpanded(true);
+                setTaskModalVisible(true);
+              }}
+            >
+              <Ionicons
+                name="add"
+                size={16}
+                color="#FFFFFF"
+              />
+              <Text style={styles.addBtnText}>
+                Add Task
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
+        {taskBoardExpanded ? (
         <View
-          style={[
+            style={[
             styles.card,
             {
               backgroundColor: theme.cardBackground,
@@ -764,17 +1298,20 @@ export default function EfficiencyScreen() {
                       {task.title}
                     </Text>
 
-                    {task.timeBlock && (
+                    {(task.startTime || task.endTime || task.estimatedMinutes) && (
                       <Text
                         style={[
                           styles.taskTime,
-                          {
-                            color:
-                              theme.textSecondary,
-                          },
+                          { color: theme.textSecondary },
                         ]}
                       >
-                        {task.timeBlock}
+                        {task.startTime
+                          ? `${formatTaskTime(task.startTime)}${
+                              task.endTime
+                                ? ` - ${formatTaskTime(task.endTime)}`
+                                : ''
+                            }`
+                          : `${task.estimatedMinutes} min estimated`}
                       </Text>
                     )}
                   </View>
@@ -852,6 +1389,43 @@ export default function EfficiencyScreen() {
             />
           </View>
         </View>
+        ) : (
+          <TouchableOpacity
+            style={[
+              styles.collapsedBoardCard,
+              {
+                backgroundColor: theme.cardBackground,
+                borderColor: theme.border,
+              },
+            ]}
+            onPress={() => setTaskBoardExpanded(true)}
+          >
+            <View style={{ flex: 1 }}>
+              <Text
+                style={[
+                  styles.collapsedBoardTitle,
+                  { color: theme.textPrimary },
+                ]}
+              >
+                {todaysTasks.length} task
+                {todaysTasks.length === 1 ? '' : 's'} today
+              </Text>
+              <Text
+                style={[
+                  styles.collapsedBoardMeta,
+                  { color: theme.textSecondary },
+                ]}
+              >
+                {completedTaskCount} completed • {remainingTaskCount} remaining
+              </Text>
+            </View>
+            <Ionicons
+              name="chevron-down"
+              size={18}
+              color={theme.textSecondary}
+            />
+          </TouchableOpacity>
+        )}
       </ScrollView>
 
       <Modal
@@ -926,7 +1500,118 @@ export default function EfficiencyScreen() {
                   { color: theme.textSecondary },
                 ]}
               >
-                Time Block (Optional)
+                Schedule (Optional)
+              </Text>
+
+              <View style={styles.timeSelectorRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.timeSelector,
+                    {
+                      borderColor: theme.border,
+                      backgroundColor: theme.background,
+                    },
+                  ]}
+                  onPress={() => openTimePicker('start')}
+                >
+                  <Ionicons
+                    name="time-outline"
+                    size={17}
+                    color={theme.efficiencyAccent}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={[
+                        styles.timeSelectorLabel,
+                        { color: theme.textSecondary },
+                      ]}
+                    >
+                      START
+                    </Text>
+                    <Text
+                      style={[
+                        styles.timeSelectorValue,
+                        { color: theme.textPrimary },
+                      ]}
+                    >
+                      {formatTaskTime(newTaskStartTime)}
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name="chevron-down"
+                    size={16}
+                    color={theme.textSecondary}
+                  />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.timeSelector,
+                    {
+                      borderColor: theme.border,
+                      backgroundColor: theme.background,
+                    },
+                  ]}
+                  onPress={() => openTimePicker('end')}
+                >
+                  <Ionicons
+                    name="time-outline"
+                    size={17}
+                    color={theme.efficiencyAccent}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={[
+                        styles.timeSelectorLabel,
+                        { color: theme.textSecondary },
+                      ]}
+                    >
+                      END
+                    </Text>
+                    <Text
+                      style={[
+                        styles.timeSelectorValue,
+                        { color: theme.textPrimary },
+                      ]}
+                    >
+                      {formatTaskTime(newTaskEndTime)}
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name="chevron-down"
+                    size={16}
+                    color={theme.textSecondary}
+                  />
+                </TouchableOpacity>
+              </View>
+
+              {(newTaskStartTime || newTaskEndTime) && (
+                <TouchableOpacity
+                  onPress={() => {
+                    setNewTaskStartTime('');
+                    setNewTaskEndTime('');
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.clearScheduleText,
+                      { color: theme.efficiencyAccent },
+                    ]}
+                  >
+                    Clear scheduled time
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text
+                style={[
+                  styles.inputLabel,
+                  { color: theme.textSecondary },
+                ]}
+              >
+                Estimated Duration (Optional)
               </Text>
 
               <TextInput
@@ -935,16 +1620,99 @@ export default function EfficiencyScreen() {
                   {
                     borderColor: theme.border,
                     color: theme.textPrimary,
-                    backgroundColor:
-                      theme.background,
+                    backgroundColor: theme.background,
                   },
                 ]}
-                placeholder="e.g. 14:00 - 15:30"
-                placeholderTextColor={
-                  theme.textSecondary
-                }
-                value={newTaskTime}
-                onChangeText={setNewTaskTime}
+                placeholder="Minutes, e.g. 90"
+                placeholderTextColor={theme.textSecondary}
+                keyboardType="numeric"
+                value={newTaskEstimatedMinutes}
+                onChangeText={setNewTaskEstimatedMinutes}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text
+                style={[
+                  styles.inputLabel,
+                  { color: theme.textSecondary },
+                ]}
+              >
+                Category
+              </Text>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.categorySelector}
+              >
+                {(
+                  [
+                    'Work',
+                    'Project',
+                    'Meeting',
+                    'Personal',
+                    'Fitness',
+                    'Nutrition',
+                    'Recovery',
+                    'Other',
+                  ] as TaskCategory[]
+                ).map((category) => (
+                  <TouchableOpacity
+                    key={category}
+                    style={[
+                      styles.categoryPill,
+                      { borderColor: theme.border },
+                      newTaskCategory === category && {
+                        backgroundColor: theme.efficiencyAccent,
+                        borderColor: theme.efficiencyAccent,
+                      },
+                    ]}
+                    onPress={() => setNewTaskCategory(category)}
+                  >
+                    <Text
+                      style={[
+                        styles.categoryPillText,
+                        {
+                          color:
+                            newTaskCategory === category
+                              ? '#FFFFFF'
+                              : theme.textSecondary,
+                        },
+                      ]}
+                    >
+                      {category}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text
+                style={[
+                  styles.inputLabel,
+                  { color: theme.textSecondary },
+                ]}
+              >
+                Notes (Optional)
+              </Text>
+
+              <TextInput
+                style={[
+                  styles.input,
+                  styles.notesInput,
+                  {
+                    borderColor: theme.border,
+                    color: theme.textPrimary,
+                    backgroundColor: theme.background,
+                  },
+                ]}
+                placeholder="Add useful context for this task"
+                placeholderTextColor={theme.textSecondary}
+                multiline
+                value={newTaskNotes}
+                onChangeText={setNewTaskNotes}
               />
             </View>
 
@@ -1010,9 +1778,10 @@ export default function EfficiencyScreen() {
                     borderWidth: 1,
                   },
                 ]}
-                onPress={() =>
-                  setTaskModalVisible(false)
-                }
+                onPress={() => {
+                  resetTaskForm();
+                  setTaskModalVisible(false);
+                }}
               >
                 <Text
                   style={{
@@ -1046,6 +1815,104 @@ export default function EfficiencyScreen() {
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
+        visible={timePickerVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setTimePickerVisible(false)}
+      >
+        <View style={styles.timePickerOverlay}>
+          <View
+            style={[
+              styles.timePickerCard,
+              {
+                backgroundColor: theme.cardBackground,
+                borderColor: theme.border,
+              },
+            ]}
+          >
+            <View style={styles.timePickerHeader}>
+              <View>
+                <Text
+                  style={[
+                    styles.modalTitle,
+                    { color: theme.textPrimary },
+                  ]}
+                >
+                  Select {timePickerTarget === 'start' ? 'Start' : 'End'} Time
+                </Text>
+                <Text
+                  style={[
+                    styles.timePickerHint,
+                    { color: theme.textSecondary },
+                  ]}
+                >
+                  Choose a time in 15-minute intervals.
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.closeTimePickerButton}
+                onPress={() => setTimePickerVisible(false)}
+              >
+                <Ionicons
+                  name="close"
+                  size={22}
+                  color={theme.textPrimary}
+                />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              style={styles.timeOptionsList}
+            >
+              {TIME_OPTIONS.map((time) => {
+                const selected =
+                  timePickerTarget === 'start'
+                    ? newTaskStartTime === time
+                    : newTaskEndTime === time;
+
+                return (
+                  <TouchableOpacity
+                    key={time}
+                    style={[
+                      styles.timeOption,
+                      { borderBottomColor: theme.border },
+                      selected && {
+                        backgroundColor: `${theme.efficiencyAccent}18`,
+                      },
+                    ]}
+                    onPress={() => selectTaskTime(time)}
+                  >
+                    <Text
+                      style={[
+                        styles.timeOptionText,
+                        {
+                          color: selected
+                            ? theme.efficiencyAccent
+                            : theme.textPrimary,
+                        },
+                      ]}
+                    >
+                      {formatTaskTime(time)}
+                    </Text>
+
+                    {selected && (
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={20}
+                        color={theme.efficiencyAccent}
+                      />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
       </Modal>
 
       <Modal
@@ -1348,6 +2215,145 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
+  planHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+  },
+
+  planSummary: {
+    fontSize: 11,
+    marginTop: 2,
+    fontWeight: '600',
+  },
+
+  remainingBadge: {
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+
+  remainingBadgeText: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+  },
+
+  planEmptyState: {
+    minHeight: 90,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 24,
+  },
+
+  planGroup: {
+    gap: 2,
+  },
+
+  planGroupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+    marginBottom: 2,
+  },
+
+  planGroupTitle: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
+
+  planTaskRow: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingVertical: 10,
+  },
+
+  planTaskMain: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+
+  planTaskTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+
+  planTaskMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 3,
+  },
+
+  planTaskMeta: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+
+  planPriority: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+  },
+
+  collapsedTimerBox: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 12,
+  },
+
+  taskBoardActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+
+  boardToggleBtn: {
+    minHeight: 32,
+    paddingHorizontal: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+
+  boardToggleText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
+  collapsedBoardCard: {
+    minHeight: 64,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+
+  collapsedBoardTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+
+  collapsedBoardMeta: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+
   aiHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1501,6 +2507,117 @@ const styles = StyleSheet.create({
   priorityPillBtnText: {
     fontSize: 12,
     fontWeight: '800',
+  },
+
+  timeSelectorRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+
+  timeSelector: {
+    flex: 1,
+    minHeight: 58,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+
+  timeSelectorLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.7,
+  },
+
+  timeSelectorValue: {
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+
+  clearScheduleText: {
+    fontSize: 11,
+    fontWeight: '800',
+    alignSelf: 'flex-end',
+    marginTop: 2,
+  },
+
+  categorySelector: {
+    gap: 8,
+    paddingRight: 4,
+  },
+
+  categoryPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+
+  categoryPillText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
+  notesInput: {
+    minHeight: 84,
+    height: 84,
+    paddingTop: 12,
+    textAlignVertical: 'top',
+  },
+
+  timePickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+
+  timePickerCard: {
+    maxHeight: '72%',
+    borderRadius: 18,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+
+  timePickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    padding: 18,
+  },
+
+  timePickerHint: {
+    fontSize: 11,
+    marginTop: 3,
+  },
+
+  closeTimePickerButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  timeOptionsList: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+
+  timeOption: {
+    minHeight: 48,
+    paddingHorizontal: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+
+  timeOptionText: {
+    fontSize: 14,
+    fontWeight: '700',
   },
 
   modalActions: {

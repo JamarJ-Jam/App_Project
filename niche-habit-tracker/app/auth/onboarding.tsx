@@ -14,13 +14,14 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import * as Calendar from 'expo-calendar/legacy';
 import { Ionicons } from '@expo/vector-icons';
 
 import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
 import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
 import { saveOnboardingProfile } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/userProfileStorage';
 
-const BACKEND_BASE_URL = 'http://192.168.0.5:4000';
+const BACKEND_BASE_URL = 'http://192.168.0.7:4000';
 
 type HeightUnit = 'cm' | 'ft';
 type WeightUnit = 'kg' | 'lbs';
@@ -72,6 +73,31 @@ interface OnboardingProfileDraft {
   scheduleType?: ScheduleType;
   calendarSyncEnabled?: boolean;
 }
+
+type CompleteOnboardingProfile = OnboardingProfileDraft &
+  Required<
+    Pick<
+      OnboardingProfileDraft,
+      | 'age'
+      | 'gender'
+      | 'height'
+      | 'heightUnit'
+      | 'currentWeight'
+      | 'targetWeight'
+      | 'weightUnit'
+      | 'primaryGoal'
+      | 'nutritionTargetsSource'
+      | 'dailyCalories'
+      | 'proteinGrams'
+      | 'carbsGrams'
+      | 'fatsGrams'
+      | 'dailySteps'
+      | 'deepWorkHours'
+      | 'employmentStatus'
+      | 'scheduleType'
+      | 'calendarSyncEnabled'
+    >
+  >;
 
 interface ChatMessage {
   id: string;
@@ -170,8 +196,10 @@ export default function OnboardingScreen() {
     };
   }, []);
 
-  const saveCompletedProfile = async (draft: OnboardingProfileDraft) => {
-    if (
+  const hasRequiredProfileFields = (
+    draft: OnboardingProfileDraft
+  ): draft is CompleteOnboardingProfile =>
+    !(
       draft.age === undefined ||
       !draft.gender ||
       draft.height === undefined ||
@@ -190,7 +218,10 @@ export default function OnboardingScreen() {
       !draft.employmentStatus ||
       !draft.scheduleType ||
       draft.calendarSyncEnabled === undefined
-    ) {
+    );
+
+  const saveCompletedProfile = async (draft: OnboardingProfileDraft) => {
+    if (!hasRequiredProfileFields(draft)) {
       throw new Error('Onboarding finished without all required profile fields.');
     }
 
@@ -214,6 +245,30 @@ export default function OnboardingScreen() {
       scheduleType: draft.scheduleType,
       calendarSyncEnabled: draft.calendarSyncEnabled,
     });
+  };
+
+  const resolveCalendarSyncChoice = async (
+    answer: string
+  ): Promise<boolean | undefined> => {
+    if (currentField !== 'calendarSyncEnabled') return undefined;
+
+    const normalized = answer.trim().toLowerCase();
+
+    const approvals = [
+      'yes', 'yes please', 'sure', 'okay', 'ok', 'allow', 'enable',
+      'enable it', 'connect', 'connect it', 'sync', 'sync it',
+    ];
+
+    const declines = [
+      'no', 'no thanks', 'no thank you', 'not now', 'skip', 'skip it',
+      "don't allow", 'do not allow', 'disable',
+    ];
+
+    if (declines.includes(normalized)) return false;
+    if (!approvals.includes(normalized)) return undefined;
+
+    const permission = await Calendar.requestCalendarPermissionsAsync();
+    return permission.status === 'granted';
   };
 
   const sendAnswer = async (answer: string, keepKeyboardOpen = false) => {
@@ -244,13 +299,20 @@ export default function OnboardingScreen() {
     scrollToBottom(false);
 
     try {
+      const resolvedCalendarSync = await resolveCalendarSyncChoice(trimmed);
+
+      const profileForRequest =
+        resolvedCalendarSync === undefined
+          ? profile
+          : { ...profile, calendarSyncEnabled: resolvedCalendarSync };
+
       const response = await fetch(`${BACKEND_BASE_URL}/api/chawgee/onboarding`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: trimmed,
           expectedField: currentField,
-          profile,
+          profile: profileForRequest,
           recentMessages: conversationContext,
         }),
       });
@@ -262,8 +324,11 @@ export default function OnboardingScreen() {
 
       const data = (await response.json()) as OnboardingResponse;
       const updatedProfile = {
-        ...profile,
+        ...profileForRequest,
         ...(data.profileUpdates ?? {}),
+        ...(resolvedCalendarSync !== undefined
+          ? { calendarSyncEnabled: resolvedCalendarSync }
+          : {}),
       };
 
       setProfile(updatedProfile);
@@ -285,7 +350,10 @@ export default function OnboardingScreen() {
 
       setTimeout(() => scrollToBottom(false), 100);
 
-      if (data.isComplete) {
+      const onboardingCanComplete =
+        data.isComplete && hasRequiredProfileFields(updatedProfile);
+
+      if (onboardingCanComplete) {
         if (!isComplete) {
           Haptics.notificationAsync(
             Haptics.NotificationFeedbackType.Success
