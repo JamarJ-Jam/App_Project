@@ -40,8 +40,7 @@ import {
 } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/userProfileStorage';
 import {
   cancelStoredTaskNotifications,
-  loadTimelineNotifications,
-  saveTimelineNotifications,
+  runTimelineNotificationTransaction,
   StoredTaskNotifications,
 } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/services/taskNotificationService';
 
@@ -843,11 +842,14 @@ export default function DashboardScreen() {
 
   const syncTimelineNotifications = useCallback(
     async (items: CalendarTask[]) => {
-      try {
-        const allowed = await ensureNotificationPermission();
-        if (!allowed) return;
+      await runTimelineNotificationTransaction(
+        async ({ notifications: saved, notificationScopeId }) => {
+          try {
+            const allowed = await ensureNotificationPermission();
+            if (!allowed) {
+              return { notifications: saved, result: undefined };
+            }
 
-        const saved = await loadTimelineNotifications();
         const next: Record<string, StoredTaskNotifications> = {};
 
         const now = new Date();
@@ -904,12 +906,55 @@ export default function DashboardScreen() {
             item.outcome === 'missed';
           const localTask =
             item.source === 'manual' || item.source === 'chawgee';
-
-          if (
+          const preStartEligible = Boolean(
             !terminal &&
             validSchedule &&
             item.date >= todayKey &&
-            start!.getTime() - 10 * 60 * 1000 > now.getTime()
+            start &&
+            start.getTime() - 10 * 60 * 1000 > now.getTime()
+          );
+          const outcomePromptEligible = Boolean(
+            !terminal &&
+            localTask &&
+            validSchedule &&
+            end &&
+            end.getTime() + 5 * 60 * 1000 > now.getTime()
+          );
+
+          if (localTask) {
+            console.log('[CHAWGEE NOTIFICATION DEBUG]', {
+              taskId: item.id,
+              title: item.title,
+              source: item.source,
+              date: item.date,
+              startTime: item.startTime,
+              endTime: item.endTime,
+              now: now.toISOString(),
+              calculatedStart: start?.toISOString(),
+              calculatedEnd: end?.toISOString(),
+              calculatedPreStartTrigger: start
+                ? new Date(
+                    start.getTime() - 10 * 60 * 1000
+                  ).toISOString()
+                : undefined,
+              calculatedOutcomeTrigger: end
+                ? new Date(
+                    end.getTime() + 5 * 60 * 1000
+                  ).toISOString()
+                : undefined,
+              validSchedule,
+              terminal,
+              preStartEligible,
+              outcomePromptEligible,
+              storedPreStartNotificationId:
+                existing?.preStart?.notificationId,
+              storedOutcomePromptNotificationId:
+                existing?.outcomePrompt?.notificationId,
+            });
+          }
+
+          if (
+            preStartEligible
           ) {
             const signature = [
               'pre_start',
@@ -922,40 +967,76 @@ export default function DashboardScreen() {
               desired.preStart = existing.preStart;
             } else {
               if (existing?.preStart) {
+                console.log(
+                  '[CHAWGEE NOTIFICATION DEBUG] ROLE_CANCELLED',
+                  {
+                    taskId: item.id,
+                    role: 'preStart',
+                    notificationId:
+                      existing.preStart.notificationId,
+                    reason: 'signature_changed',
+                  }
+                );
                 await Notifications.cancelScheduledNotificationAsync(
                   existing.preStart.notificationId
                 );
               }
-              const notificationId =
-                await Notifications.scheduleNotificationAsync({
-                  content: {
-                    title: 'Upcoming with Chawgee',
-                    body: `${item.title} starts in 10 minutes.`,
-                    data: {
-                      type: 'timeline_upcoming',
-                      notificationRole: 'pre_start',
-                      taskId: item.id,
-                      taskDate: item.date,
+              const preStartTrigger = new Date(
+                start!.getTime() - 10 * 60 * 1000
+              );
+              console.log(
+                '[CHAWGEE NOTIFICATION DEBUG] PRESTART_SCHEDULING',
+                {
+                  taskId: item.id,
+                  trigger: preStartTrigger.toISOString(),
+                  signature,
+                }
+              );
+              let notificationId: string;
+              try {
+                notificationId =
+                  await Notifications.scheduleNotificationAsync({
+                    content: {
+                      title: 'Upcoming with Chawgee',
+                      body: `${item.title} starts in 10 minutes.`,
+                      data: {
+                        type: 'timeline_upcoming',
+                        notificationRole: 'pre_start',
+                        taskId: item.id,
+                        taskDate: item.date,
+                        notificationScopeId,
+                      },
+                      sound: true,
                     },
-                    sound: true,
-                  },
-                  trigger: {
-                    type:
-                      Notifications.SchedulableTriggerInputTypes.DATE,
-                    date: new Date(
-                      start!.getTime() - 10 * 60 * 1000
-                    ),
-                  },
-                });
+                    trigger: {
+                      type:
+                        Notifications.SchedulableTriggerInputTypes.DATE,
+                      date: preStartTrigger,
+                    },
+                  });
+              } catch (error) {
+                console.warn(
+                  '[CHAWGEE NOTIFICATION DEBUG] PRESTART_SCHEDULE_FAILED',
+                  {
+                    taskId: item.id,
+                    message:
+                      error instanceof Error
+                        ? error.message
+                        : 'Unknown scheduling error',
+                  }
+                );
+                throw error;
+              }
+              console.log(
+                '[CHAWGEE NOTIFICATION DEBUG] PRESTART_SCHEDULED',
+                { taskId: item.id, notificationId }
+              );
               desired.preStart = { notificationId, signature };
             }
           }
 
           if (
-            !terminal &&
-            localTask &&
-            validSchedule &&
-            end!.getTime() + 5 * 60 * 1000 > now.getTime()
+            outcomePromptEligible
           ) {
             const triggerAt = new Date(
               end!.getTime() + 5 * 60 * 1000
@@ -972,29 +1053,67 @@ export default function DashboardScreen() {
               desired.outcomePrompt = existing.outcomePrompt;
             } else {
               if (existing?.outcomePrompt) {
+                console.log(
+                  '[CHAWGEE NOTIFICATION DEBUG] ROLE_CANCELLED',
+                  {
+                    taskId: item.id,
+                    role: 'outcomePrompt',
+                    notificationId:
+                      existing.outcomePrompt.notificationId,
+                    reason: 'signature_changed',
+                  }
+                );
                 await Notifications.cancelScheduledNotificationAsync(
                   existing.outcomePrompt.notificationId
                 );
               }
-              const notificationId =
-                await Notifications.scheduleNotificationAsync({
-                  content: {
-                    title: 'How did it go?',
-                    body: `${item.title} has ended. Let Chawgee know if you completed it, missed it, or need to reschedule.`,
-                    data: {
-                      type: 'task_outcome_prompt',
-                      notificationRole: 'outcome_prompt',
-                      taskId: item.id,
-                      taskDate: item.date,
+              console.log(
+                '[CHAWGEE NOTIFICATION DEBUG] OUTCOME_SCHEDULING',
+                {
+                  taskId: item.id,
+                  trigger: triggerAt.toISOString(),
+                  signature,
+                }
+              );
+              let notificationId: string;
+              try {
+                notificationId =
+                  await Notifications.scheduleNotificationAsync({
+                    content: {
+                      title: 'How did it go?',
+                      body: `${item.title} has ended. Let Chawgee know if you completed it, missed it, or need to reschedule.`,
+                      data: {
+                        type: 'task_outcome_prompt',
+                        notificationRole: 'outcome_prompt',
+                        taskId: item.id,
+                        taskDate: item.date,
+                        notificationScopeId,
+                      },
+                      sound: true,
                     },
-                    sound: true,
-                  },
-                  trigger: {
-                    type:
-                      Notifications.SchedulableTriggerInputTypes.DATE,
-                    date: triggerAt,
-                  },
-                });
+                    trigger: {
+                      type:
+                        Notifications.SchedulableTriggerInputTypes.DATE,
+                      date: triggerAt,
+                    },
+                  });
+              } catch (error) {
+                console.warn(
+                  '[CHAWGEE NOTIFICATION DEBUG] OUTCOME_SCHEDULE_FAILED',
+                  {
+                    taskId: item.id,
+                    message:
+                      error instanceof Error
+                        ? error.message
+                        : 'Unknown scheduling error',
+                  }
+                );
+                throw error;
+              }
+              console.log(
+                '[CHAWGEE NOTIFICATION DEBUG] OUTCOME_SCHEDULED',
+                { taskId: item.id, notificationId }
+              );
               desired.outcomePrompt = {
                 notificationId,
                 signature,
@@ -1003,11 +1122,34 @@ export default function DashboardScreen() {
           }
 
           if (existing?.preStart && !desired.preStart) {
+            console.log(
+              '[CHAWGEE NOTIFICATION DEBUG] ROLE_CANCELLED',
+              {
+                taskId: item.id,
+                role: 'preStart',
+                notificationId: existing.preStart.notificationId,
+                reason: terminal
+                  ? 'terminal'
+                  : 'no_longer_eligible',
+              }
+            );
             await Notifications.cancelScheduledNotificationAsync(
               existing.preStart.notificationId
             );
           }
           if (existing?.outcomePrompt && !desired.outcomePrompt) {
+            console.log(
+              '[CHAWGEE NOTIFICATION DEBUG] ROLE_CANCELLED',
+              {
+                taskId: item.id,
+                role: 'outcomePrompt',
+                notificationId:
+                  existing.outcomePrompt.notificationId,
+                reason: terminal
+                  ? 'terminal'
+                  : 'no_longer_eligible',
+              }
+            );
             await Notifications.cancelScheduledNotificationAsync(
               existing.outcomePrompt.notificationId
             );
@@ -1026,6 +1168,18 @@ export default function DashboardScreen() {
                 record.outcomePrompt,
               ]) {
                 if (stored) {
+                  console.log(
+                    '[CHAWGEE NOTIFICATION DEBUG] ROLE_CANCELLED',
+                    {
+                      taskId,
+                      role:
+                        stored === record.preStart
+                          ? 'preStart'
+                          : 'outcomePrompt',
+                      notificationId: stored.notificationId,
+                      reason: 'stale_task',
+                    }
+                  );
                   await Notifications.cancelScheduledNotificationAsync(
                     stored.notificationId
                   );
@@ -1040,13 +1194,16 @@ export default function DashboardScreen() {
           }
         }
 
-        await saveTimelineNotifications(next);
-      } catch (error) {
-        console.warn(
-          'Unable to sync Chawgee timeline notifications:',
-          error
-        );
-      }
+            return { notifications: next, result: undefined };
+          } catch (error) {
+            console.warn(
+              'Unable to sync Chawgee timeline notifications:',
+              error
+            );
+            return { notifications: saved, result: undefined };
+          }
+        }
+      );
     },
     [ensureNotificationPermission]
   );
