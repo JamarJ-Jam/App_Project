@@ -163,32 +163,12 @@ const reconcileNotificationMap = (
       pendingIds.has(record.preStart.notificationId)
     ) {
       nextRecord.preStart = record.preStart;
-    } else if (record.preStart) {
-      console.log(
-        '[CHAWGEE NOTIFICATION DEBUG] STORED_ROLE_REMOVED',
-        {
-          taskId,
-          role: 'preStart',
-          notificationId: record.preStart.notificationId,
-          reason: 'missing_from_pending_snapshot',
-        }
-      );
     }
     if (
       record.outcomePrompt &&
       pendingIds.has(record.outcomePrompt.notificationId)
     ) {
       nextRecord.outcomePrompt = record.outcomePrompt;
-    } else if (record.outcomePrompt) {
-      console.log(
-        '[CHAWGEE NOTIFICATION DEBUG] STORED_ROLE_REMOVED',
-        {
-          taskId,
-          role: 'outcomePrompt',
-          notificationId: record.outcomePrompt.notificationId,
-          reason: 'missing_from_pending_snapshot',
-        }
-      );
     }
 
     if (nextRecord.preStart || nextRecord.outcomePrompt) {
@@ -224,40 +204,12 @@ export const runTimelineNotificationTransaction = <T>(
     }
 
     for (const scheduled of pendingResult ?? []) {
-      if (isOwnedTimelineNotification(scheduled)) {
-        console.log(
-          '[CHAWGEE NOTIFICATION DEBUG] PENDING_SNAPSHOT',
-          {
-            notificationId: scheduled.id,
-            type: scheduled.data.type,
-            notificationRole: scheduled.data.notificationRole,
-            taskId: scheduled.data.taskId,
-            notificationScopeIdPresent:
-              typeof scheduled.data.notificationScopeId === 'string',
-            notificationScopeMatches:
-              scheduled.data.notificationScopeId ===
-              notificationScopeId,
-          }
-        );
-      }
-    }
-
-    for (const scheduled of pendingResult ?? []) {
       if (
         isOwnedTimelineNotification(scheduled) &&
         scheduled.data.notificationScopeId === notificationScopeId &&
         !representedIds.has(scheduled.id)
       ) {
         try {
-          console.log(
-            '[CHAWGEE NOTIFICATION DEBUG] ORPHAN_CANCELLED',
-            {
-              taskId: scheduled.data.taskId,
-              role: scheduled.data.notificationRole,
-              notificationId: scheduled.id,
-              reason: 'orphan',
-            }
-          );
           await Notifications.cancelScheduledNotificationAsync(
             scheduled.id
           );
@@ -295,18 +247,6 @@ export const cancelStoredTaskNotifications = async (
       for (const stored of [record.preStart, record.outcomePrompt]) {
         if (!stored?.notificationId) continue;
         try {
-          console.log(
-            '[CHAWGEE NOTIFICATION DEBUG] ROLE_CANCELLED',
-            {
-              taskId,
-              role:
-                stored === record.preStart
-                  ? 'preStart'
-                  : 'outcomePrompt',
-              notificationId: stored.notificationId,
-              reason: 'explicit_task_cleanup',
-            }
-          );
           await Notifications.cancelScheduledNotificationAsync(
             stored.notificationId
           );

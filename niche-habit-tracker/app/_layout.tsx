@@ -1,3 +1,4 @@
+import '../src/storage/utils/notifications';
 import React from 'react';
 import { Stack } from 'expo-router';
 import { ThemeProvider } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
