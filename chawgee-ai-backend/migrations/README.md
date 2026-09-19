@@ -1,6 +1,6 @@
 # PostgreSQL migrations
 
-The first account/identity migration is generated for review, not applied.
+The first account/identity migration is applied in the development database.
 Use versioned standard PostgreSQL SQL with
 node-pg-migrate's `-- Up Migration` / `-- Down Migration` sections. Keep migrations
 deterministic and review them; never edit a migration already applied.
@@ -9,7 +9,7 @@ deterministic and review them; never edit a migration already applied.
 - `npm run db:migrate:check` checks filenames, unique versions and section markers
   offline. It does not parse SQL or check live migration history.
 - `npm run db:migrate:up` explicitly connects and applies pending migrations.
-  This command has NOT been executed as part of this foundation task.
+  It must only be run through the controlled release process.
 
 Run migrations once in a controlled release job with development dependencies
 installed (`tsx` and `node-pg-migrate`), before deploying compatible application

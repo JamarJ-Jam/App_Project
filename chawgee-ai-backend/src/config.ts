@@ -8,6 +8,13 @@ dotenv.config({ quiet: true });
 
 export class ConfigurationError extends Error {}
 
+export interface AuthConfig {
+  issuer: string;
+  jwksUrl: string;
+  audience: string;
+  allowedAlgorithms: readonly ['ES256'];
+}
+
 const required = (env: NodeJS.ProcessEnv, name: string): string => {
   const value = env[name]?.trim();
   if (!value) throw new ConfigurationError(`Missing required backend configuration: ${name}.`);
@@ -21,6 +28,38 @@ const integer = (value: string | undefined, fallback: number, max: number, name:
     throw new ConfigurationError(`Invalid backend configuration: ${name} must be an integer from 1 to ${max}.`);
   }
   return result;
+};
+
+const requiredHttpsUrl = (env: NodeJS.ProcessEnv, name: string): string => {
+  const value = required(env, name);
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== 'https:' ||
+      url.username || url.password || url.search || url.hash
+    ) throw new Error();
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    throw new ConfigurationError(`Invalid backend configuration: ${name} must be an HTTPS URL without credentials, query parameters, or fragment.`);
+  }
+};
+
+export const getAuthConfig = (env: NodeJS.ProcessEnv = process.env): AuthConfig => {
+  const allowedAlgorithms = required(env, 'SUPABASE_AUTH_ALLOWED_ALGORITHMS')
+    .split(',')
+    .map((algorithm) => algorithm.trim())
+    .filter(Boolean);
+
+  if (allowedAlgorithms.length !== 1 || allowedAlgorithms[0] !== 'ES256') {
+    throw new ConfigurationError('Invalid backend configuration: SUPABASE_AUTH_ALLOWED_ALGORITHMS must be ES256.');
+  }
+
+  return Object.freeze({
+    issuer: requiredHttpsUrl(env, 'SUPABASE_AUTH_ISSUER'),
+    jwksUrl: requiredHttpsUrl(env, 'SUPABASE_AUTH_JWKS_URL'),
+    audience: required(env, 'SUPABASE_AUTH_AUDIENCE'),
+    allowedAlgorithms: ['ES256'] as const,
+  });
 };
 
 export const config = Object.freeze({

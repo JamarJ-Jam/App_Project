@@ -1,3 +1,24 @@
+## Environment configuration
+
+Mobile/public values are read at build time:
+
+- `EXPO_PUBLIC_CHAWGEE_API_BASE_URL`
+- `EXPO_PUBLIC_SUPABASE_URL`
+- `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+
+The Supabase client is an infrastructure boundary only. The current mock
+authentication flow does not use it yet. Do not put database credentials,
+service-role keys, JWT signing secrets, or other server secrets in these values.
+
+Future backend-only authentication verification will use:
+
+- `SUPABASE_AUTH_ISSUER`
+- `SUPABASE_AUTH_JWKS_URL`
+- `SUPABASE_AUTH_AUDIENCE`
+- `SUPABASE_AUTH_ALLOWED_ALGORITHMS`
+
+Those values belong only in the backend environment and are not used by the
+mobile application.
 # Welcome to your Expo app 👋
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).

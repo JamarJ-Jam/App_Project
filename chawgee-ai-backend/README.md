@@ -5,6 +5,20 @@ values, preserves deployment-variable precedence, and validates database setting
 only when a database operation is requested. Existing AI configuration is checked
 when its consumers initialize, so migration tooling does not need an AI key.
 
+## Future JWT verification configuration
+
+The backend authentication verifier uses the Supabase project's asymmetric
+ECC P-256 signing keys and expects `ES256` tokens. These values are server-only,
+validated lazily when verification is requested, and must not be exposed to the
+mobile application:
+
+- `SUPABASE_AUTH_ISSUER`: trusted Supabase token issuer URL
+- `SUPABASE_AUTH_JWKS_URL`: trusted HTTPS JWKS URL
+- `SUPABASE_AUTH_AUDIENCE`: expected token audience
+- `SUPABASE_AUTH_ALLOWED_ALGORITHMS`: `ES256` only
+
+No shared JWT secret or service-role key is used for token verification.
+
 ## Database configuration
 
 - `DATABASE_URL`: required for runtime database operations; no default.

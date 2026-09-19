@@ -1,7 +1,7 @@
-# Permanent account identity — proposed repository design
+# Permanent account identity — repository design
 
-Status: design and migration generation only. No authentication, repository
-implementation, database execution, or provider-user creation is included.
+Status: identity migration applied in development. Repository implementation is
+being introduced separately; no provider-user creation is included.
 
 ## Model and ownership
 
@@ -98,8 +98,11 @@ network calls inside the transaction.
    the conflicting insert waited for its competitor. A single CTE sharing the
    insertion snapshot cannot reliably read that winner.
 6. Return the winner and its actual status. If a future unlink/deletion race makes
-   it absent, return a typed retry result after candidate cleanup; retry the whole
-   operation a small bounded number of times. Never commit an orphan candidate.
+   it absent, perform at most three separate winner lookups after the losing
+   transaction has ended, waiting 5 ms between attempts. This retry is only for
+   post-conflict visibility and never provisions another candidate. If all three
+   lookups remain absent, return a typed internal concurrency error. Never commit
+   an orphan candidate.
 
 Uniqueness is the ultimate guard, even for writers not following this algorithm.
 Two contenders can temporarily insert candidates, but at most one account for the
@@ -173,6 +176,14 @@ project. Apply UP there, and test:
 Current offline migration validation checks file conventions, not SQL execution.
 Existing fake-pool tests validate transaction mechanics, not PostgreSQL constraints
 or concurrency. These integration cases remain a gate before identity rollout.
+
+Before production release, run the identity concurrency integration suite against
+an isolated real PostgreSQL database. The environment must explicitly refuse
+Supabase development and production hosts. The suite must validate simultaneous
+same-identity provisioning, one surviving account and binding, both callers
+resolving to the same account, no orphan candidate, later-login idempotency,
+suspended and pending-deletion identities without replacements, rollback behavior,
+and independent concurrent identities.
 
 References:
 - https://www.postgresql.org/docs/14/functions-uuid.html
