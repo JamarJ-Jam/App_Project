@@ -21,7 +21,7 @@ import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker
 import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
 import { saveOnboardingProfile } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/userProfileStorage';
 
-const BACKEND_BASE_URL = 'http://192.168.0.7:4000';
+import { appConfig } from '../../src/config';
 
 type HeightUnit = 'cm' | 'ft';
 type WeightUnit = 'kg' | 'lbs';
@@ -306,7 +306,7 @@ export default function OnboardingScreen() {
           ? profile
           : { ...profile, calendarSyncEnabled: resolvedCalendarSync };
 
-      const response = await fetch(`${BACKEND_BASE_URL}/api/chawgee/onboarding`, {
+      const response = await fetch(`${appConfig.apiBaseUrl}/api/chawgee/onboarding`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

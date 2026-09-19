@@ -1,13 +1,14 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import { generateText } from 'ai';
-import { openrouter } from '@openrouter/ai-sdk-provider';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { config } from './config.js';
 import { CHAWGEE_SYSTEM_PROMPT } from './prompt.js';
 import { agentTools } from './tools.js';
 import chawgeeOnboardingRoute from './chawgeeOnboardingRoute.js';
+import { database } from './db/database.js';
 
-dotenv.config();
+const openrouter = createOpenRouter({ apiKey: config.openRouterApiKey });
 
 const app = express();
 
@@ -16,7 +17,7 @@ app.use(express.json());
 
 app.use(chawgeeOnboardingRoute);
 
-const PORT: number = Number(process.env.PORT) || 4000;
+const PORT = config.port;
 
 app.post('/api/chawgee/briefing', async (req: Request, res: Response) => {
   try {
@@ -93,8 +94,39 @@ app.get('/health', (_req: Request, res: Response) => {
   });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+let shuttingDown = false;
+app.get('/ready', async (_req: Request, res: Response) => {
+  const ready = !shuttingDown && await database.ready();
+  res.status(ready && !shuttingDown ? 200 : 503).json({ success: ready && !shuttingDown });
+});
+
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(
     `⚡ Chawgee AI Agent Backend running on port ${PORT}`
   );
 });
+
+const shutdown = () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  // Stop accepting requests, drain in-flight work, then close database connections.
+  const deadline = setTimeout(() => {
+    console.error('Graceful shutdown timed out.');
+    process.exit(1);
+  }, 10000);
+  deadline.unref();
+  server.close(async (error) => {
+    try {
+      await database.close();
+      process.exitCode = error ? 1 : 0;
+    } catch {
+      console.error('Database shutdown failed.');
+      process.exitCode = 1;
+    } finally {
+      clearTimeout(deadline);
+    }
+  });
+};
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

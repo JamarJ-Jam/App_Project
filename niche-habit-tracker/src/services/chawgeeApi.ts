@@ -1,4 +1,4 @@
-const BACKEND_BASE_URL = 'http://192.168.0.7:4000';
+import { appConfig } from '../config';
 
 export interface BriefingRequestPayload {
   userContext?: any;
@@ -17,7 +17,7 @@ export const fetchChawgeeBriefing = async (
 ): Promise<BriefingResponse> => {
   try {
     const response = await fetch(
-      `${BACKEND_BASE_URL}/api/chawgee/briefing`,
+      `${appConfig.apiBaseUrl}/api/chawgee/briefing`,
       {
         method: 'POST',
         headers: {

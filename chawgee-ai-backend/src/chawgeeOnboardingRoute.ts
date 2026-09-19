@@ -1,14 +1,15 @@
 import { Router } from 'express';
 import { generateText } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { config } from './config.js';
 
 const router = Router();
 
 const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY,
+  apiKey: config.openRouterApiKey,
 });
 
-const MODEL = process.env.OPENROUTER_ONBOARDING_MODEL || 'openai/gpt-oss-120b';
+const MODEL = config.openRouterOnboardingModel;
 
 type OnboardingField =
   | 'primaryGoal'
