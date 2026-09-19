@@ -7,6 +7,10 @@ import { CHAWGEE_SYSTEM_PROMPT } from './prompt.js';
 import { agentTools } from './tools.js';
 import chawgeeOnboardingRoute from './chawgeeOnboardingRoute.js';
 import { database } from './db/database.js';
+import { createBootstrapRouter } from './auth/bootstrapRoute.js';
+import { createAuthenticationMiddleware } from './auth/authMiddleware.js';
+import { createTokenVerifier } from './auth/tokenVerifier.js';
+import { createIdentityService } from './services/identityService.js';
 
 const openrouter = createOpenRouter({ apiKey: config.openRouterApiKey });
 
@@ -14,6 +18,18 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+const identityService = createIdentityService(database);
+let tokenVerifier: ReturnType<typeof createTokenVerifier> | undefined;
+const authenticationMiddleware = createAuthenticationMiddleware({
+  verifyAccessToken: async (token) => {
+    tokenVerifier ??= createTokenVerifier();
+    return tokenVerifier.verify(token);
+  },
+  resolveIdentity: identityService.resolveOrProvision,
+});
+
+app.use(createBootstrapRouter(authenticationMiddleware));
 
 app.use(chawgeeOnboardingRoute);
 

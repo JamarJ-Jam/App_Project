@@ -21,7 +21,7 @@ import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/
 export default function LoginScreen() {
   const { theme = LightTheme } = useTheme() || {};
   const router = useRouter();
-  const { signIn, signInWithGoogle, signInAsGuest } = useAuth();
+  const { signIn, signInWithGoogle, signInAsGuest, authState, authError } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -32,15 +32,26 @@ export default function LoginScreen() {
       Alert.alert('Missing Fields', 'Please enter both email and password.');
       return;
     }
-    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    await signIn(email.trim());
-    router.replace('/(tabs)/dashboard');
+    try {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const result = await signIn(email.trim(), password);
+      if (result.status === 'verification_required' || authState === 'verification_required') {
+        Alert.alert('Verify Your Email', 'Check your inbox and verify your email before continuing.');
+        return;
+      }
+      router.replace('/(tabs)/dashboard');
+    } catch (error) {
+      Alert.alert('Unable to Sign In', error instanceof Error ? error.message : authError ?? 'Please try again.');
+    }
   };
 
   const handleGoogleAuth = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    await signInWithGoogle('user@gmail.com', 'Google User');
-    router.replace('/auth/onboarding');
+    try {
+      await signInWithGoogle();
+    } catch (error) {
+      Alert.alert('Google Sign In', error instanceof Error ? error.message : 'Google sign-in is not available yet.');
+    }
   };
 
   const handleGuestLogin = async () => {
@@ -144,7 +155,7 @@ export default function LoginScreen() {
           </View>
 
           <View style={styles.footer}>
-            <Text style={{ color: theme.textSecondary }}>Don't have an account? </Text>
+            <Text style={{ color: theme.textSecondary }}>Don&apos;t have an account? </Text>
             <TouchableOpacity onPress={() => router.replace('/auth/signup')}>
               <Text style={[styles.signUpLink, { color: theme.primaryAccent }]}>Sign Up</Text>
             </TouchableOpacity>

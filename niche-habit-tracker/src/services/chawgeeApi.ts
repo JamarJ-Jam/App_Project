@@ -1,5 +1,44 @@
 import { appConfig } from '../config';
 
+export interface BootstrapAccount {
+  id: string;
+  status: 'active';
+}
+
+export interface BootstrapResponse {
+  success: true;
+  account: BootstrapAccount;
+}
+
+export const bootstrapChawgeeAccount = async (accessToken: string): Promise<BootstrapAccount> => {
+  try {
+    const response = await fetch(`${appConfig.apiBaseUrl}/api/auth/bootstrap`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (response.status === 401) throw new Error('Your authentication session is no longer valid.');
+    if (response.status === 403) throw new Error('Your Chawgee account is currently restricted.');
+    if (!response.ok) throw new Error('Unable to initialize your Chawgee account.');
+
+    const data = await response.json() as Partial<BootstrapResponse>;
+    if (
+      data.success !== true ||
+      !data.account ||
+      typeof data.account.id !== 'string' ||
+      data.account.status !== 'active'
+    ) throw new Error('Unable to initialize your Chawgee account.');
+
+    return data.account;
+  } catch (error) {
+    if (error instanceof Error && (
+      error.message === 'Your authentication session is no longer valid.' ||
+      error.message === 'Your Chawgee account is currently restricted.'
+    )) throw error;
+    throw new Error('Unable to initialize your Chawgee account.');
+  }
+};
+
 export interface BriefingRequestPayload {
   userContext?: any;
   userQuery?: string;

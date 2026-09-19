@@ -32,15 +32,26 @@ export default function SignUpScreen() {
       Alert.alert('Missing Information', 'Please complete all fields to create your account.');
       return;
     }
-    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    await signUp(email.trim(), name.trim());
-    router.replace('/auth/onboarding');
+    try {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const result = await signUp(email.trim(), password, name.trim());
+      if (result.status === 'verification_required') {
+        Alert.alert('Verify Your Email', 'Check your inbox and verify your email before continuing.');
+        return;
+      }
+      router.replace('/auth/onboarding');
+    } catch (error) {
+      Alert.alert('Unable to Create Account', error instanceof Error ? error.message : 'Please try again.');
+    }
   };
 
   const handleGoogleSignUp = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    await signInWithGoogle('user@gmail.com', 'Google User');
-    router.replace('/auth/onboarding');
+    try {
+      await signInWithGoogle();
+    } catch (error) {
+      Alert.alert('Google Sign Up', error instanceof Error ? error.message : 'Google sign-up is not available yet.');
+    }
   };
 
   return (
