@@ -56,45 +56,6 @@ const AuthContext = createContext<AuthContextType>({
 const AUTH_STORAGE_KEY = '@accountability_user_session';
 const LEGACY_MOCK_STORAGE_KEY = '@accountability_legacy_mock_session';
 
-// TEMP AUTH DIAGNOSTIC - REMOVE AFTER LIVE TEST
-const logAuthDiagnostic = (message: string): void => {
-  console.log(`[AUTH_DIAG] TEMP AUTH DIAGNOSTIC - REMOVE AFTER LIVE TEST ${message}`);
-};
-
-const safeDiagnosticName = (value: unknown): string | undefined => {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9_.-]+$/.test(value)) return undefined;
-  return value;
-};
-
-const classifySignInThrow = (error: unknown): string => {
-  const candidate = error as {
-    constructor?: { name?: unknown };
-    name?: unknown;
-    code?: unknown;
-    message?: unknown;
-  } | null;
-  const type = safeDiagnosticName(candidate?.constructor?.name) ?? 'unknown';
-  const name = safeDiagnosticName(candidate?.name);
-  const code = safeDiagnosticName(candidate?.code);
-  const message = typeof candidate?.message === 'string' ? candidate.message.toLowerCase() : '';
-
-  logAuthDiagnostic(`SIGN_IN_THROW_TYPE=${type}`);
-  if (name) logAuthDiagnostic(`SIGN_IN_THROW_NAME=${name}`);
-  if (code) logAuthDiagnostic(`SIGN_IN_THROW_CODE=${code}`);
-
-  const category = message.includes('timeout') || code === 'ETIMEDOUT'
-    ? 'timeout'
-    : message.includes('abort') || code === 'ABORT_ERR'
-      ? 'abort'
-      : message.includes('tls') || message.includes('certificate')
-        ? 'tls'
-        : message.includes('fetch') || message.includes('network') || code === 'ERR_NETWORK'
-          ? 'fetch'
-          : 'unknown';
-  logAuthDiagnostic(`SIGN_IN_THROW_CATEGORY=${category}`);
-  return category;
-};
-
 const isVerifiedEmailSession = (session: Session): boolean =>
   Boolean(session.user.email_confirmed_at);
 
@@ -132,16 +93,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setPendingVerificationEmail(null);
   };
 
-  const setDiagnosticAuthState = (nextState: AuthState) => {
-    setAuthState(nextState);
-    logAuthDiagnostic(`AUTH_STATE=${nextState}`);
-  };
-
   const reconcileSession = useCallback(async (session: Session | null): Promise<AuthActionResult> => {
     if (!session) {
       authLifecycle.current.invalidate();
       clearAuthenticatedState();
-      setDiagnosticAuthState('unauthenticated');
+      setAuthState('unauthenticated');
       return { status: 'verification_required' };
     }
 
@@ -150,7 +106,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setAuthError(null);
       setPendingVerificationEmail(session.user.email ?? null);
-      setDiagnosticAuthState('verification_required');
+      setAuthState('verification_required');
       return { status: 'verification_required' };
     }
 
@@ -169,7 +125,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(nextUser);
         setAuthError(null);
         setPendingVerificationEmail(null);
-        setDiagnosticAuthState('authenticated');
+        setAuthState('authenticated');
         await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextUser));
         return { status: 'authenticated' };
       } catch (error) {
@@ -177,7 +133,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return { status: 'verification_required' };
         }
         clearAuthenticatedState();
-        setDiagnosticAuthState('bootstrap_failed');
+        setAuthState('bootstrap_failed');
         throw error instanceof Error
           ? error
           : new Error('Unable to initialize your Chawgee account.');
@@ -213,7 +169,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const parsed = JSON.parse(stored) as User;
             if (parsed.isGuest) {
               setUser(parsed);
-              setDiagnosticAuthState('guest');
+              setAuthState('guest');
               return;
             }
             await AsyncStorage.setItem(LEGACY_MOCK_STORAGE_KEY, stored);
@@ -222,7 +178,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
           }
         }
-        setDiagnosticAuthState('unauthenticated');
+        setAuthState('unauthenticated');
       } catch {
         if (mounted) {
           const stored = await AsyncStorage.getItem(AUTH_STORAGE_KEY);
@@ -230,7 +186,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const parsed = stored ? JSON.parse(stored) as User : null;
             if (parsed?.isGuest) {
               setUser(parsed);
-              setDiagnosticAuthState('guest');
+              setAuthState('guest');
               return;
             }
             if (stored) {
@@ -241,7 +197,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
           }
           clearAuthenticatedState();
-          setDiagnosticAuthState('unauthenticated');
+          setAuthState('unauthenticated');
           setAuthError('Authentication is not configured.');
         }
       } finally {
@@ -267,50 +223,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [reconcileSession]);
 
   const signIn = async (email: string, password: string): Promise<AuthActionResult> => {
-    let signInResultReceived = false;
-    let signInRequestStarted = false;
     try {
       let client: ReturnType<typeof getSupabaseClient>;
       try {
         client = getSupabaseClient();
-        logAuthDiagnostic('SUPABASE_CLIENT_READY');
       } catch {
-        logAuthDiagnostic('SUPABASE_CLIENT_THROW');
         throw new Error(safeAuthMessage('sign in'));
       }
 
-      logAuthDiagnostic('SUPABASE_SIGN_IN_REQUEST_STARTED');
-      signInRequestStarted = true;
       const { data, error } = await client.auth.signInWithPassword({ email: email.trim(), password });
-      signInResultReceived = true;
       if (error) {
-        const safeCode = typeof error.code === 'string' && /^[a-z0-9_.-]+$/i.test(error.code)
-          ? error.code
-          : undefined;
-        const safeStatus = typeof error.status === 'number' && Number.isInteger(error.status)
-          ? error.status
-          : undefined;
-        logAuthDiagnostic(
-          safeCode || safeStatus !== undefined
-            ? `SUPABASE_SIGN_IN_FAILED${safeCode ? ` code=${safeCode}` : ''}${safeStatus !== undefined ? ` status=${safeStatus}` : ''}`
-            : 'SUPABASE_SIGN_IN_FAILED'
-        );
         const errorText = `${error.code ?? ''} ${error.message ?? ''}`.toLowerCase();
         if (errorText.includes('email_not_confirmed') || errorText.includes('email not confirmed')) {
           setPendingVerificationEmail(email.trim());
-          setDiagnosticAuthState('verification_required');
+          setAuthState('verification_required');
           return { status: 'verification_required' };
         }
         throw new Error(safeAuthMessage('sign in'));
       }
-      logAuthDiagnostic('SUPABASE_SIGN_IN_SUCCEEDED');
       if (!data.session) throw new Error(safeAuthMessage('sign in'));
       return await reconcileSession(data.session);
     } catch (error) {
-      if (signInRequestStarted && !signInResultReceived) {
-        logAuthDiagnostic('SUPABASE_SIGN_IN_THROW');
-        classifySignInThrow(error);
-      }
       const message = error instanceof Error && error.message.includes('Chawgee account')
         ? error.message
         : safeAuthMessage('sign in');
@@ -329,7 +262,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (error) throw new Error(safeAuthMessage('create account'));
       if (!data.session) {
         setPendingVerificationEmail(data.user?.email ?? email.trim());
-        setDiagnosticAuthState('verification_required');
+        setAuthState('verification_required');
         return { status: 'verification_required' };
       }
       return await reconcileSession(data.session);
@@ -352,7 +285,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextUser));
     setUser(nextUser);
     setAuthError(null);
-    setDiagnosticAuthState('guest');
+    setAuthState('guest');
   };
 
   const updateAccountIdentity = async (email: string, name?: string) => {
@@ -368,7 +301,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signOut = async () => {
     authLifecycle.current.invalidate();
     clearAuthenticatedState();
-    setDiagnosticAuthState('unauthenticated');
+    setAuthState('unauthenticated');
 
     if (user?.isGuest) {
       await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
