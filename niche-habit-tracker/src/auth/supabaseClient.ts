@@ -1,11 +1,20 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseConfig } from '../config';
 import { supabaseStorage } from './supabaseStorage';
+import { initializeCryptoFoundation, isCryptoReady } from './cryptoFoundation';
 
 let client: SupabaseClient | undefined;
 
-export const getSupabaseClient = (): SupabaseClient => {
-  if (client) return client;
+/**
+ * Async gate: initialize crypto, then get/create Supabase client
+ */
+export const getSupabaseClient = async (): Promise<SupabaseClient> => {
+  await initializeCryptoFoundation();
+  if (!isCryptoReady()) throw new Error('Crypto foundation is unavailable');
+
+  if (client) {
+    return client;
+  }
 
   const config = getSupabaseConfig();
   if (!config) {
@@ -16,6 +25,7 @@ export const getSupabaseClient = (): SupabaseClient => {
 
   client = createClient(config.url, config.publishableKey, {
     auth: {
+      flowType: 'pkce',
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: false,

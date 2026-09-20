@@ -33,6 +33,8 @@ export default function AuthRouteGuard() {
     );
   }
 
+  if (routeKind === 'callback') return null;
+
   return null;
 }
 

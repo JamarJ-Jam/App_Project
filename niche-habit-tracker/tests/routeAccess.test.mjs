@@ -8,6 +8,12 @@ test('loading holds every route to prevent protected content flashing', () => {
   assert.deepEqual(decision('loading', 'protected'), { type: 'hold' });
 });
 
+test('callback route is allowed through every transitional auth state', () => {
+  for (const state of ['loading', 'unauthenticated', 'guest', 'verification_required', 'authenticated', 'bootstrap_failed']) {
+    assert.deepEqual(decision(state, 'callback'), { type: 'allow' });
+  }
+});
+
 test('unauthenticated users can access public/onboarding but not protected routes', () => {
   assert.deepEqual(decision('unauthenticated', 'public'), { type: 'allow' });
   assert.deepEqual(decision('unauthenticated', 'onboarding'), { type: 'allow' });
@@ -42,6 +48,7 @@ test('route classification keeps public, onboarding, and protected groups distin
   assert.equal(classifyRoute(['auth', 'login']), 'public');
   assert.equal(classifyRoute(['auth', 'signup']), 'public');
   assert.equal(classifyRoute(['auth', 'onboarding']), 'onboarding');
+  assert.equal(classifyRoute(['auth', 'callback']), 'callback');
   assert.equal(classifyRoute(['(tabs)', 'index']), 'public');
   assert.equal(classifyRoute(['(tabs)']), 'public');
   assert.equal(classifyRoute(['(tabs)', 'dashboard']), 'protected');

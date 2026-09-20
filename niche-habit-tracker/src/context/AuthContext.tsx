@@ -3,6 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Session } from '@supabase/supabase-js';
 import { getSupabaseClient } from '../auth/supabaseClient';
 import { AuthLifecycleCoordinator } from '../auth/authLifecycle';
+import { AuthCallbackCoordinator, type CallbackResult } from '../auth/authCallbackCoordinator';
+import { AUTH_CALLBACK_URI } from '../auth/authRedirect';
 import { bootstrapChawgeeAccount, type BootstrapAccount } from '../services/chawgeeApi';
 
 export interface User {
@@ -33,6 +35,7 @@ interface AuthContextType {
   isLoading: boolean;
   signIn: (email: string, password: string) => Promise<AuthActionResult>;
   signUp: (email: string, password: string, name?: string) => Promise<AuthActionResult>;
+  processAuthCallback: (incomingUrl: string) => Promise<CallbackResult>;
   signInWithGoogle: () => Promise<void>;
   signInAsGuest: () => Promise<void>;
   updateAccountIdentity: (email: string, name?: string) => Promise<void>;
@@ -47,6 +50,7 @@ const AuthContext = createContext<AuthContextType>({
   isLoading: true,
   signIn: async () => ({ status: 'verification_required' }),
   signUp: async () => ({ status: 'verification_required' }),
+  processAuthCallback: async () => ({ status: 'failed', reason: 'invalid_callback' }),
   signInWithGoogle: async () => {},
   signInAsGuest: async () => {},
   updateAccountIdentity: async () => {},
@@ -86,6 +90,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
   const bootstrapPromises = useRef(new Map<string, Promise<AuthActionResult>>());
   const authLifecycle = useRef(new AuthLifecycleCoordinator());
+  const authCallback = useRef(new AuthCallbackCoordinator());
 
   const clearAuthenticatedState = () => {
     setUser(null);
@@ -148,12 +153,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     let mounted = true;
-    let client: ReturnType<typeof getSupabaseClient> | undefined;
+    let client: Awaited<ReturnType<typeof getSupabaseClient>> | undefined;
     let subscription: { unsubscribe: () => void } | undefined;
 
     const restore = async () => {
       try {
-        client = getSupabaseClient();
+        client = await getSupabaseClient();
         const { data, error } = await client.auth.getSession();
         if (!mounted) return;
 
@@ -206,15 +211,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     void restore();
-    try {
-      client = client ?? getSupabaseClient();
-      const result = client.auth.onAuthStateChange((_event, session) => {
-        if (mounted) void reconcileSession(session);
-      });
-      subscription = result.data.subscription;
-    } catch {
-      // Missing public configuration is surfaced through the existing auth state.
-    }
+    (async () => {
+      try {
+        client = client ?? await getSupabaseClient();
+        if (!mounted) return;
+        const result = client.auth.onAuthStateChange((event, session) => {
+          if (event === 'PASSWORD_RECOVERY') {
+            authCallback.current.cancel();
+            return;
+          }
+          if (authCallback.current.handleAuthEvent(session, reconcileSession)) return;
+          if (mounted) void reconcileSession(session);
+        });
+        subscription = result.data.subscription;
+      } catch {
+        // Missing public configuration is surfaced through the existing auth state.
+      }
+    })();
 
     return () => {
       mounted = false;
@@ -222,11 +235,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [reconcileSession]);
 
-  const signIn = async (email: string, password: string): Promise<AuthActionResult> => {
+  const processAuthCallback = async (incomingUrl: string): Promise<CallbackResult> => {
     try {
-      let client: ReturnType<typeof getSupabaseClient>;
+      const client = await getSupabaseClient();
+      return await authCallback.current.process(incomingUrl, {
+        exchangeCode: (code) => client.auth.exchangeCodeForSession(code),
+        reconcileSession,
+        getCurrentSession: async () => (await client.auth.getSession()).data.session,
+      });
+    } catch {
+      return { status: 'failed', reason: 'verification_failed' };
+    }
+  };
+
+  const signIn = async (email: string, password: string): Promise<AuthActionResult> => {
+    authCallback.current.cancel();
+    try {
+      let client: Awaited<ReturnType<typeof getSupabaseClient>>;
       try {
-        client = getSupabaseClient();
+        client = await getSupabaseClient();
       } catch {
         throw new Error(safeAuthMessage('sign in'));
       }
@@ -253,11 +280,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signUp = async (email: string, password: string, name?: string): Promise<AuthActionResult> => {
+    authCallback.current.cancel();
     try {
-      const { data, error } = await getSupabaseClient().auth.signUp({
+      const client = await getSupabaseClient();
+      const { data, error } = await client.auth.signUp({
         email: email.trim(),
         password,
-        options: { data: { full_name: name?.trim() || undefined } },
+        options: {
+          emailRedirectTo: AUTH_CALLBACK_URI,
+          data: { full_name: name?.trim() || undefined },
+        },
       });
       if (error) throw new Error(safeAuthMessage('create account'));
       if (!data.session) {
@@ -280,6 +312,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signInAsGuest = async () => {
+    authCallback.current.cancel();
     authLifecycle.current.invalidate();
     const nextUser = guestUser();
     await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextUser));
@@ -290,7 +323,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateAccountIdentity = async (email: string, name?: string) => {
     if (!user || user.isGuest) return;
-    const { error } = await getSupabaseClient().auth.updateUser({
+    const client = await getSupabaseClient();
+    const { error } = await client.auth.updateUser({
       email: email.trim(),
       data: { full_name: name?.trim() || undefined },
     });
@@ -299,6 +333,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signOut = async () => {
+    authCallback.current.cancel();
     authLifecycle.current.invalidate();
     clearAuthenticatedState();
     setAuthState('unauthenticated');
@@ -307,7 +342,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
     } else {
       try {
-        await getSupabaseClient().auth.signOut();
+        const client = await getSupabaseClient();
+        await client.auth.signOut();
       } catch {
         throw new Error('Unable to sign out right now.');
       }
@@ -321,6 +357,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       authState,
       authError,
       pendingVerificationEmail,
+      processAuthCallback,
       isLoading: authState === 'loading',
       signIn,
       signUp,

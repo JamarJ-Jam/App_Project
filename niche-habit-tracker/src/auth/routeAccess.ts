@@ -6,7 +6,7 @@ export type AuthState =
   | 'authenticated'
   | 'bootstrap_failed';
 
-export type RouteKind = 'public' | 'onboarding' | 'protected';
+export type RouteKind = 'public' | 'onboarding' | 'callback' | 'protected';
 
 export type RouteDecision =
   | { type: 'hold' }
@@ -17,6 +17,7 @@ export const resolveRouteAccess = (
   authState: AuthState,
   routeKind: RouteKind,
 ): RouteDecision => {
+  if (routeKind === 'callback') return { type: 'allow' };
   if (authState === 'loading') return { type: 'hold' };
 
   if (authState === 'unauthenticated') {
@@ -37,6 +38,7 @@ export const resolveRouteAccess = (
 };
 
 export const classifyRoute = (segments: readonly string[]): RouteKind => {
+  if (segments[0] === 'auth' && segments[1] === 'callback') return 'callback';
   if (segments[0] === 'auth' && segments[1] === 'onboarding') return 'onboarding';
   if (segments[0] === 'auth') return 'public';
   if (segments[0] === '(tabs)' && (!segments[1] || segments[1] === 'index')) return 'public';
