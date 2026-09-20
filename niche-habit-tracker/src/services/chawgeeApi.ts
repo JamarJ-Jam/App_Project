@@ -11,12 +11,18 @@ export interface BootstrapResponse {
 }
 
 export const bootstrapChawgeeAccount = async (accessToken: string): Promise<BootstrapAccount> => {
+  let responseReceived = false;
   try {
+    // TEMP AUTH DIAGNOSTIC - REMOVE AFTER LIVE TEST
+    console.log('[AUTH_DIAG] TEMP AUTH DIAGNOSTIC - REMOVE AFTER LIVE TEST BOOTSTRAP_REQUEST_STARTED');
     const response = await fetch(`${appConfig.apiBaseUrl}/api/auth/bootstrap`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${accessToken}` },
     });
+    responseReceived = true;
 
+    // TEMP AUTH DIAGNOSTIC - REMOVE AFTER LIVE TEST
+    console.log(`[AUTH_DIAG] TEMP AUTH DIAGNOSTIC - REMOVE AFTER LIVE TEST BOOTSTRAP_STATUS_${response.status}`);
     if (response.status === 401) throw new Error('Your authentication session is no longer valid.');
     if (response.status === 403) throw new Error('Your Chawgee account is currently restricted.');
     if (!response.ok) throw new Error('Unable to initialize your Chawgee account.');
@@ -35,6 +41,10 @@ export const bootstrapChawgeeAccount = async (accessToken: string): Promise<Boot
       error.message === 'Your authentication session is no longer valid.' ||
       error.message === 'Your Chawgee account is currently restricted.'
     )) throw error;
+    if (!responseReceived) {
+      // TEMP AUTH DIAGNOSTIC - REMOVE AFTER LIVE TEST
+      console.log('[AUTH_DIAG] TEMP AUTH DIAGNOSTIC - REMOVE AFTER LIVE TEST BOOTSTRAP_NETWORK_FAILURE');
+    }
     throw new Error('Unable to initialize your Chawgee account.');
   }
 };
