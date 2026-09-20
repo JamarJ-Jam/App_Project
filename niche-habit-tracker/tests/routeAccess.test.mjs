@@ -68,3 +68,34 @@ test('policy does not accept identity values as authorization inputs', () => {
   assert.deepEqual(decision('unauthenticated', 'protected'), { type: 'redirect', href: '/(tabs)' });
   assert.deepEqual(decision('verification_required', 'protected'), { type: 'redirect', href: '/auth/login' });
 });
+test('completed authenticated callback requires authoritative authenticated state', () => {
+  const callback = { status: 'complete', result: { status: 'authenticated' } };
+  assert.deepEqual(resolveRouteAccess('authenticated', 'callback', callback), {
+    type: 'redirect', href: '/(tabs)/dashboard',
+  });
+  for (const state of ['loading', 'unauthenticated', 'guest', 'verification_required', 'bootstrap_failed']) {
+    assert.deepEqual(resolveRouteAccess(state, 'callback', callback), { type: 'allow' });
+  }
+  assert.deepEqual(resolveRouteAccess('authenticated', 'protected', callback), { type: 'allow' });
+});
+
+test('exchange success without completed reconciliation cannot navigate', () => {
+  for (const status of ['waiting', 'processing']) {
+    assert.deepEqual(resolveRouteAccess('authenticated', 'callback', { status }), { type: 'allow' });
+  }
+});
+
+test('all safe unsuccessful callback results stay visible even with an authenticated identity', () => {
+  const outcomes = [
+    { status: 'verification_required' },
+    { status: 'replayed', reason: 'replayed' },
+    ...['invalid_callback', 'verification_failed', 'stale_operation', 'bootstrap_failed',
+      'device_verifier_missing', 'conflicting_identity', 'recovery_not_supported']
+      .map((reason) => ({ status: 'failed', reason })),
+  ];
+  for (const result of outcomes) {
+    for (const state of ['authenticated', 'bootstrap_failed', 'verification_required']) {
+      assert.deepEqual(resolveRouteAccess(state, 'callback', { status: 'complete', result }), { type: 'allow' });
+    }
+  }
+});

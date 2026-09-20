@@ -7,7 +7,6 @@ const session = (id, token = `${id}-token`) => ({
   user: { id, email: `${id}@example.test`, email_confirmed_at: '2026-01-01T00:00:00Z' },
   access_token: token,
 });
-
 const deferred = () => {
   let resolve;
   const promise = new Promise((nextResolve) => { resolve = nextResolve; });

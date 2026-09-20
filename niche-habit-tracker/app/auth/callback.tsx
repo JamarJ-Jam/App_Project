@@ -1,7 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import * as Linking from 'expo-linking';
-import { useAuth } from '../../src/context/AuthContext';
+import { useAuthCallbackHandoff } from '../../src/context/AuthCallbackHandoffContext';
 import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
 import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
 
@@ -25,31 +24,12 @@ const failureMessage = (reason: string): string => {
 
 export default function AuthCallbackScreen() {
   const { theme = LightTheme } = useTheme() || {};
-  const { processAuthCallback } = useAuth();
-  const [viewState, setViewState] = useState<CallbackViewState>({ kind: 'processing' });
-  const started = useRef(false);
-
-  useEffect(() => {
-    if (started.current) return;
-    started.current = true;
-    let mounted = true;
-
-    const process = async () => {
-      const incomingUrl = await Linking.getInitialURL();
-      const result = await processAuthCallback(incomingUrl ?? '');
-      if (!mounted) return;
-      if (result.status === 'authenticated' || result.status === 'verification_required') {
-        setViewState({ kind: 'complete' });
-      } else {
-        setViewState({ kind: 'failed', message: failureMessage(result.reason) });
-      }
-    };
-
-    void process();
-    return () => {
-      mounted = false;
-    };
-  }, [processAuthCallback]);
+  const callback = useAuthCallbackHandoff();
+  const viewState: CallbackViewState = callback.status !== 'complete'
+    ? { kind: 'processing' }
+    : callback.result.status === 'authenticated' || callback.result.status === 'verification_required'
+      ? { kind: 'complete' }
+      : { kind: 'failed', message: failureMessage(callback.result.reason) };
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>

@@ -43,7 +43,6 @@ function createHarness(failures = {}) {
   const exports = {};
   runInNewContext(outputText, {
     exports,
-    // Capture neither values nor diagnostics; production logging is untouched.
     console: { log() {} },
     require(specifier) {
       if (specifier === 'react-native') return { Platform: { OS: 'android' } };
@@ -53,7 +52,6 @@ function createHarness(failures = {}) {
   });
   return { storage: exports.supabaseStorage, calls, entries };
 }
-
 // Boolean comparisons keep payloads out of assertion failure output.
 async function assertRoundTrip(bytes, unit = 'x') {
   const { storage, calls, entries } = createHarness();

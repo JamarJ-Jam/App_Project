@@ -1,3 +1,5 @@
+import type { HandoffSnapshot } from './authCallbackHandoff';
+
 export type AuthState =
   | 'loading'
   | 'unauthenticated'
@@ -16,8 +18,17 @@ export type RouteDecision =
 export const resolveRouteAccess = (
   authState: AuthState,
   routeKind: RouteKind,
+  callback?: HandoffSnapshot,
 ): RouteDecision => {
-  if (routeKind === 'callback') return { type: 'allow' };
+  if (routeKind === 'callback') {
+    // Exchange success alone is insufficient: both the completed callback and
+    // the authoritative application lifecycle must confirm authentication.
+    if (authState === 'authenticated' && callback?.status === 'complete' &&
+        callback.result.status === 'authenticated') {
+      return { type: 'redirect', href: '/(tabs)/dashboard' };
+    }
+    return { type: 'allow' };
+  }
   if (authState === 'loading') return { type: 'hold' };
 
   if (authState === 'unauthenticated') {

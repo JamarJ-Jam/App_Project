@@ -137,7 +137,9 @@ export class AuthCallbackCoordinator {
       if (exchange.error) return safeExchangeFailure(exchange.error);
 
       const session = exchange.data.session;
-      if (!session) return { status: 'failed', reason: 'verification_failed' };
+      if (!session) {
+        return { status: 'failed', reason: 'verification_failed' };
+      }
       if (operation.baselineIdentity && operation.baselineIdentity !== session.user.id) {
         return { status: 'failed', reason: 'conflicting_identity' };
       }

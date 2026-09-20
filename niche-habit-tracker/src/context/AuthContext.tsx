@@ -235,7 +235,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [reconcileSession]);
 
-  const processAuthCallback = async (incomingUrl: string): Promise<CallbackResult> => {
+  const processAuthCallback = useCallback(async (incomingUrl: string): Promise<CallbackResult> => {
     try {
       const client = await getSupabaseClient();
       return await authCallback.current.process(incomingUrl, {
@@ -246,7 +246,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {
       return { status: 'failed', reason: 'verification_failed' };
     }
-  };
+  }, [reconcileSession]);
 
   const signIn = async (email: string, password: string): Promise<AuthActionResult> => {
     authCallback.current.cancel();

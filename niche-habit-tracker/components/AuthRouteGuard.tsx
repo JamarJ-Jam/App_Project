@@ -1,17 +1,19 @@
 import React, { useEffect, useRef } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { usePathname, useRouter, useSegments, type Href } from 'expo-router';
+import { useAuthCallbackHandoff } from '../src/context/AuthCallbackHandoffContext';
 import { useAuth } from '../src/context/AuthContext';
 import { classifyRoute, resolveRouteAccess } from '../src/auth/routeAccess';
 
 export default function AuthRouteGuard() {
   const { authState } = useAuth();
+  const callback = useAuthCallbackHandoff();
   const router = useRouter();
   const segments = useSegments();
   const pathname = usePathname();
   const lastRedirect = useRef<string | null>(null);
   const routeKind = classifyRoute(segments);
-  const decision = resolveRouteAccess(authState, routeKind);
+  const decision = resolveRouteAccess(authState, routeKind, callback);
 
   useEffect(() => {
     if (decision.type !== 'redirect') {
