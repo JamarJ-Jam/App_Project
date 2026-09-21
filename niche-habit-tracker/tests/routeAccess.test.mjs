@@ -99,3 +99,34 @@ test('all safe unsuccessful callback results stay visible even with an authentic
     }
   }
 });
+
+test('reset-password is classified before generic public auth routes', () => {
+  assert.equal(classifyRoute(['auth', 'reset-password']), 'recovery');
+});
+
+test('recovery callback navigation requires both completed admission and authoritative recovery', () => {
+  const complete = { status: 'complete', result: { status: 'recovery' } };
+  assert.deepEqual(resolveRouteAccess('recovery', 'callback', complete), { type: 'redirect', href: '/auth/reset-password' });
+  for (const state of ['loading', 'unauthenticated', 'guest', 'authenticated', 'verification_required', 'bootstrap_failed', 'recovery_processing', 'recovery_interrupted']) {
+    assert.deepEqual(resolveRouteAccess(state, 'callback', complete), { type: 'allow' });
+  }
+  for (const callback of [
+    { status: 'processing', intent: 'recovery' }, { status: 'waiting' },
+    { status: 'complete', result: { status: 'authenticated' } },
+    { status: 'complete', result: { status: 'replayed', reason: 'replayed', intent: 'recovery' } },
+    { status: 'complete', result: { status: 'failed', reason: 'recovery_evidence_mismatch', intent: 'recovery' } },
+  ]) assert.deepEqual(resolveRouteAccess('recovery', 'callback', callback), { type: 'allow' });
+});
+
+test('only authoritative recovery can access the reset destination', () => {
+  for (const state of ['loading', 'unauthenticated', 'guest', 'authenticated', 'verification_required', 'bootstrap_failed', 'recovery_processing', 'recovery_interrupted']) {
+    assert.notEqual(resolveRouteAccess(state, 'recovery').type, 'allow');
+  }
+  assert.deepEqual(resolveRouteAccess('recovery', 'recovery'), { type: 'allow' });
+  for (const route of ['public', 'onboarding', 'protected']) {
+    assert.deepEqual(resolveRouteAccess('recovery', route), { type: 'redirect', href: '/auth/reset-password' });
+  }
+  assert.deepEqual(resolveRouteAccess('authenticated', 'recovery'), { type: 'redirect', href: '/(tabs)/dashboard' });
+  assert.deepEqual(resolveRouteAccess('guest', 'recovery'), { type: 'redirect', href: '/(tabs)/dashboard' });
+  assert.deepEqual(resolveRouteAccess('recovery_interrupted', 'recovery'), { type: 'redirect', href: '/auth/login' });
+});

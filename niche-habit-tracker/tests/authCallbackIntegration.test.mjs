@@ -62,7 +62,7 @@ test('missing verifier is classified without exposing provider details', async (
   assert.deepEqual(result, { status: 'failed', reason: 'device_verifier_missing' });
 });
 
-test('recovery callbacks are rejected before code exchange', async () => {
+test('recovery requires the durable restriction and admission hooks before exchange', async () => {
   const coordinator = new AuthCallbackCoordinator();
   let exchanges = 0;
   const result = await coordinator.process(`${AUTH_CALLBACK_URI}?type=recovery&code=recovery-code`, dependencies(async () => {
@@ -70,7 +70,7 @@ test('recovery callbacks are rejected before code exchange', async () => {
     return { data: { session: session('recovery') }, error: null };
   }));
 
-  assert.deepEqual(result, { status: 'failed', reason: 'recovery_not_supported' });
+  assert.deepEqual(result, { status: 'failed', reason: 'recovery_not_supported', intent: 'recovery' });
   assert.equal(exchanges, 0);
 });
 

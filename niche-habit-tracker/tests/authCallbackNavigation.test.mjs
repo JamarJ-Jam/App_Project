@@ -94,3 +94,50 @@ test('guard leaves failed, restricted, conflicting, stale, and replayed results 
   }
   assert.deepEqual(h.replacements, []);
 });
+
+test('recovery guard replaces once only after both success conditions and has no destination loop', () => {
+  const h = guardHarness();
+  h.input.authState = 'recovery_processing';
+  h.render();
+  h.input.authState = 'recovery';
+  h.render();
+  assert.deepEqual(h.replacements, []);
+  h.input.callback = { status: 'complete', result: { status: 'recovery' } };
+  h.render(); h.render();
+  assert.deepEqual(h.replacements, ['/auth/reset-password']);
+  h.input.pathname = '/auth/reset-password';
+  h.input.segments = ['auth', 'reset-password'];
+  h.render(); h.render();
+  assert.deepEqual(h.replacements, ['/auth/reset-password']);
+});
+
+test('stale recovery success cannot redirect logout, guest or a newer login to reset', () => {
+  for (const state of ['unauthenticated', 'guest', 'authenticated', 'recovery_interrupted']) {
+    const h = guardHarness();
+    h.input.callback = { status: 'complete', result: { status: 'recovery' } };
+    h.input.authState = state;
+    h.render(); h.render();
+    assert.deepEqual(h.replacements, []);
+    if (state === 'authenticated' || state === 'guest') {
+      h.input.pathname = '/dashboard';
+      h.input.segments = ['(tabs)', 'dashboard'];
+      h.render();
+      assert.deepEqual(h.replacements, []);
+    }
+  }
+});
+
+test('direct reset route is denied by the actual guard outside recovery', () => {
+  for (const [state, target] of [
+    ['unauthenticated', '/auth/login'], ['verification_required', '/auth/login'],
+    ['bootstrap_failed', '/auth/login'], ['recovery_interrupted', '/auth/login'],
+    ['guest', '/(tabs)/dashboard'], ['authenticated', '/(tabs)/dashboard'],
+  ]) {
+    const h = guardHarness();
+    h.input.authState = state;
+    h.input.pathname = '/auth/reset-password';
+    h.input.segments = ['auth', 'reset-password'];
+    h.render(); h.render();
+    assert.deepEqual(h.replacements, [target]);
+  }
+});

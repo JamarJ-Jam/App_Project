@@ -11,7 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
@@ -21,11 +21,16 @@ import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/
 export default function LoginScreen() {
   const { theme = LightTheme } = useTheme() || {};
   const router = useRouter();
-  const { signIn, signInWithGoogle, signInAsGuest, authState, authError } = useAuth();
+  const { passwordUpdated } = useLocalSearchParams<{ passwordUpdated?: string }>();
+  const { signIn, signInWithGoogle, signInAsGuest, requestPasswordRecovery, authState, authError } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [mode, setMode] = useState<'signin' | 'forgot'>('signin');
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [recoverySubmitting, setRecoverySubmitting] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
@@ -42,6 +47,37 @@ export default function LoginScreen() {
       router.replace('/(tabs)/dashboard');
     } catch (error) {
       Alert.alert('Unable to Sign In', error instanceof Error ? error.message : authError ?? 'Please try again.');
+    }
+  };
+
+  const handleForgotPassword = () => {
+    setRecoveryEmail(email.trim());
+    setRecoveryMessage(null);
+    setMode('forgot');
+  };
+
+  const handleBackToSignIn = () => {
+    setMode('signin');
+    setRecoveryMessage(null);
+  };
+
+  const handleRequestRecovery = async () => {
+    if (recoverySubmitting) return;
+    setRecoverySubmitting(true);
+    try {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const result = await requestPasswordRecovery(recoveryEmail);
+      if (result.status === 'failed' && result.reason === 'invalid_email') {
+        Alert.alert('Enter Your Email', 'Enter a valid email address to receive a reset link.');
+        return;
+      }
+      if (result.status === 'failed') {
+        setRecoveryMessage('Unable to send a reset link right now. Please try again in a moment.');
+        return;
+      }
+      setRecoveryMessage("If an account exists for this email, we'll send a password reset link.");
+    } finally {
+      setRecoverySubmitting(false);
     }
   };
 
@@ -81,14 +117,63 @@ export default function LoginScreen() {
 
           <View style={styles.headerContainer}>
             <View style={[styles.brandIcon, { backgroundColor: `${theme.primaryAccent}18` }]}>
-              <Ionicons name="sparkles" size={24} color={theme.primaryAccent} />
+              <Ionicons name={mode === 'forgot' ? 'key-outline' : 'sparkles'} size={24} color={theme.primaryAccent} />
             </View>
-            <Text style={[styles.title, { color: theme.textPrimary }]}>Welcome Back</Text>
+            <Text style={[styles.title, { color: theme.textPrimary }]}>
+              {mode === 'forgot' ? 'Reset Your Password' : 'Welcome Back'}
+            </Text>
             <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-              Sign in to continue with your Chawgee.
+              {mode === 'forgot'
+                ? 'Enter your email and we will send you a password reset link.'
+                : 'Sign in to continue with your Chawgee.'}
             </Text>
           </View>
 
+          {mode === 'signin' && passwordUpdated === '1' && (
+            <Text style={[styles.recoverySuccessBanner, { color: theme.primaryAccent }]}>
+              Password updated. Sign in with your new password.
+            </Text>
+          )}
+
+          {mode === 'forgot' ? (
+            <View style={[styles.formCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+              <View style={styles.inputGroup}>
+                <Text style={[styles.label, { color: theme.textPrimary }]}>Email Address</Text>
+                <View style={[styles.inputWrapper, { borderColor: theme.border, backgroundColor: theme.inputBackground }]}>
+                  <Ionicons name="mail-outline" size={20} color={theme.textSecondary} style={styles.inputIcon} />
+                  <TextInput
+                    style={[styles.input, { color: theme.textPrimary }]}
+                    placeholder="alex@example.com"
+                    placeholderTextColor={theme.textSecondary}
+                    value={recoveryEmail}
+                    onChangeText={setRecoveryEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    editable={!recoverySubmitting}
+                  />
+                </View>
+              </View>
+
+              {recoveryMessage && (
+                <Text style={[styles.recoveryMessage, { color: theme.textSecondary }]}>{recoveryMessage}</Text>
+              )}
+
+              <TouchableOpacity
+                style={[styles.primaryBtn, { backgroundColor: theme.primaryAccent, opacity: recoverySubmitting ? 0.7 : 1 }]}
+                onPress={handleRequestRecovery}
+                activeOpacity={0.85}
+                disabled={recoverySubmitting}
+              >
+                <Text style={styles.primaryBtnText}>{recoverySubmitting ? 'Sending…' : 'Send Reset Link'}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={handleBackToSignIn} disabled={recoverySubmitting}>
+                <Text style={[styles.signUpLink, { color: theme.primaryAccent, textAlign: 'center' }]}>
+                  Back to Sign In
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
           <View style={[styles.formCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
             <View style={styles.inputGroup}>
               <Text style={[styles.label, { color: theme.textPrimary }]}>Email Address</Text>
@@ -124,6 +209,10 @@ export default function LoginScreen() {
               </View>
             </View>
 
+            <TouchableOpacity onPress={handleForgotPassword} style={styles.forgotPasswordRow}>
+              <Text style={[styles.forgotPasswordText, { color: theme.primaryAccent }]}>Forgot password?</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.primaryBtn, { backgroundColor: theme.primaryAccent }]}
               onPress={handleLogin}
@@ -153,13 +242,16 @@ export default function LoginScreen() {
               <Text style={[styles.guestBtnText, { color: theme.textSecondary }]}>Explore as Guest</Text>
             </TouchableOpacity>
           </View>
+          )}
 
+          {mode === 'signin' && (
           <View style={styles.footer}>
             <Text style={{ color: theme.textSecondary }}>Don&apos;t have an account? </Text>
             <TouchableOpacity onPress={() => router.replace('/auth/signup')}>
               <Text style={[styles.signUpLink, { color: theme.primaryAccent }]}>Sign Up</Text>
             </TouchableOpacity>
           </View>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -181,6 +273,10 @@ const styles = StyleSheet.create({
   inputWrapper: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, minHeight: 50 },
   inputIcon: { marginRight: 10 },
   input: { flex: 1, fontSize: 15 },
+  forgotPasswordRow: { alignSelf: 'flex-end', marginTop: -6 },
+  forgotPasswordText: { fontSize: 13, fontWeight: '800' },
+  recoveryMessage: { fontSize: 13, lineHeight: 19, textAlign: 'center' },
+  recoverySuccessBanner: { fontSize: 13, fontWeight: '700', lineHeight: 19, textAlign: 'center', marginBottom: 16 },
   primaryBtn: { minHeight: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
   primaryBtnText: { color: '#FFFFFF', fontWeight: '900', fontSize: 15 },
   dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 2 },

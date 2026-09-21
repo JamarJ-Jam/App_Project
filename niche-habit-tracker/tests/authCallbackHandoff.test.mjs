@@ -201,3 +201,40 @@ test('capture readiness follows listener lifetime', () => {
   h.stop();
   assert.equal(h.handoff.isReady(), false);
 });
+
+test('recovery initial/event duplicates retain a safe processing hint and perform one exchange', async () => {
+  const exchange = deferred();
+  const coordinator = new AuthCallbackCoordinator();
+  let exchanges = 0;
+  const h = harness((original) => coordinator.process(original, {
+    beforeExchange: async () => {},
+    exchangeCode: async () => { exchanges += 1; return exchange.promise; },
+    admitSession: async (_session, redirectType) => redirectType === 'recovery'
+      ? { status: 'recovery' } : { status: 'failed', reason: 'recovery_evidence_mismatch' },
+    reconcileSession: async () => { assert.fail('recovery cannot bootstrap'); },
+  }));
+  const original = `${AUTH_CALLBACK_URI}?type=recovery&code=synthetic`;
+  h.emit(original);
+  h.initial.resolve(original);
+  h.emit(original);
+  await flush();
+  assert.deepEqual(h.handoff.getSnapshot(), { status: 'processing', intent: 'recovery' });
+  exchange.resolve({ data: { session: { user: { id: 'synthetic' } }, redirectType: 'recovery' }, error: null });
+  await flush();
+  assert.equal(exchanges, 1);
+  assert.deepEqual(h.calls, [original]);
+  assert.deepEqual(h.handoff.getSnapshot(), { status: 'complete', result: { status: 'recovery' } });
+  h.stop();
+});
+
+test('late recovery result cannot overwrite a newer handoff result', async () => {
+  const old = deferred();
+  const h = harness((original) => original.includes('type=recovery') ? old.promise : Promise.resolve({ status: 'authenticated' }));
+  h.emit(`${AUTH_CALLBACK_URI}?type=recovery&code=old`);
+  h.emit(url('new'));
+  await flush();
+  old.resolve({ status: 'recovery' });
+  await flush();
+  assert.deepEqual(h.handoff.getSnapshot(), { status: 'complete', result: { status: 'authenticated' } });
+  h.stop();
+});

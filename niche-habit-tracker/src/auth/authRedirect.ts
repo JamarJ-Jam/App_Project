@@ -5,15 +5,18 @@ const CALLBACK_PATH = '/auth/callback';
 const CODE_PARAMETER = 'code';
 const ERROR_PARAMETERS = new Set(['error', 'error_code', 'error_description']);
 
-export type AuthCallbackParseResult =
-  | { kind: 'code'; code: string }
-  | { kind: 'recovery' }
-  | { kind: 'error'; reason: 'verification_failed' }
-  | { kind: 'invalid'; reason: 'invalid_callback' };
+export type AuthCallbackIntent = 'signup' | 'recovery';
 
-const invalidCallback = (): AuthCallbackParseResult => ({
+export type AuthCallbackParseResult =
+  | { kind: 'code'; code: string; intent?: 'signup' }
+  | { kind: 'recovery'; code: string }
+  | { kind: 'error'; reason: 'verification_failed' }
+  | { kind: 'invalid'; reason: 'invalid_callback'; intent?: 'recovery' };
+
+const invalidCallback = (intent?: 'recovery'): AuthCallbackParseResult => ({
   kind: 'invalid',
   reason: 'invalid_callback',
+  ...(intent ? { intent } : {}),
 });
 
 const decodeQueryPart = (value: string): string => decodeURIComponent(value.replace(/\+/g, ' '));
@@ -46,7 +49,9 @@ export const parseAuthCallbackUrl = (incomingUrl: string): AuthCallbackParseResu
     typeof incomingUrl !== 'string' ||
     !incomingUrl ||
     incomingUrl !== incomingUrl.trim() ||
-    (!incomingUrl.startsWith(AUTH_CALLBACK_URI) && !incomingUrl.startsWith(`${AUTH_CALLBACK_URI}?`))
+    /[\u0000-\u0020\u007f]/u.test(incomingUrl) ||
+    incomingUrl.includes('#') ||
+    (incomingUrl !== AUTH_CALLBACK_URI && !incomingUrl.startsWith(`${AUTH_CALLBACK_URI}?`))
   ) return invalidCallback();
 
   let parsed: URL;
@@ -77,14 +82,18 @@ export const parseAuthCallbackUrl = (incomingUrl: string): AuthCallbackParseResu
 
   const intent = parameters.get('type');
   if (intent !== undefined && intent !== 'signup' && intent !== 'recovery') return invalidCallback();
-  if (intent === 'recovery') return { kind: 'recovery' };
-
   const code = parameters.get(CODE_PARAMETER);
+  if (intent === 'recovery') {
+    // Intent permits exchange only. SDK evidence must authorize recovery later.
+    if (parameters.size !== 2 || !code || /[\s\u0000-\u001f\u007f]/u.test(code)) return invalidCallback('recovery');
+    return { kind: 'recovery', code };
+  }
+
   const error = parameters.get('error');
   if (code !== undefined && error !== undefined) return invalidCallback();
 
   if (code !== undefined) {
-    return code ? { kind: 'code', code } : invalidCallback();
+    return code ? { kind: 'code', code, ...(intent === 'signup' ? { intent } : {}) } : invalidCallback();
   }
 
   if (error !== undefined) {

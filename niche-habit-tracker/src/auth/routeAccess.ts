@@ -6,14 +6,17 @@ export type AuthState =
   | 'guest'
   | 'verification_required'
   | 'authenticated'
-  | 'bootstrap_failed';
+  | 'bootstrap_failed'
+  | 'recovery_processing'
+  | 'recovery'
+  | 'recovery_interrupted';
 
-export type RouteKind = 'public' | 'onboarding' | 'callback' | 'protected';
+export type RouteKind = 'public' | 'onboarding' | 'callback' | 'protected' | 'recovery';
 
 export type RouteDecision =
   | { type: 'hold' }
   | { type: 'allow' }
-  | { type: 'redirect'; href: '/(tabs)' | '/(tabs)/dashboard' | '/auth/login' };
+  | { type: 'redirect'; href: '/(tabs)' | '/(tabs)/dashboard' | '/auth/login' | '/auth/reset-password' };
 
 export const resolveRouteAccess = (
   authState: AuthState,
@@ -21,6 +24,9 @@ export const resolveRouteAccess = (
   callback?: HandoffSnapshot,
 ): RouteDecision => {
   if (routeKind === 'callback') {
+    if (authState === 'recovery' && callback?.status === 'complete' && callback.result.status === 'recovery') {
+      return { type: 'redirect', href: '/auth/reset-password' };
+    }
     // Exchange success alone is insufficient: both the completed callback and
     // the authoritative application lifecycle must confirm authentication.
     if (authState === 'authenticated' && callback?.status === 'complete' &&
@@ -29,7 +35,17 @@ export const resolveRouteAccess = (
     }
     return { type: 'allow' };
   }
-  if (authState === 'loading') return { type: 'hold' };
+  if (authState === 'loading' || authState === 'recovery_processing') return { type: 'hold' };
+
+  if (authState === 'recovery') {
+    return routeKind === 'recovery' ? { type: 'allow' } : { type: 'redirect', href: '/auth/reset-password' };
+  }
+  if (routeKind === 'recovery') {
+    return { type: 'redirect', href: authState === 'authenticated' || authState === 'guest' ? '/(tabs)/dashboard' : '/auth/login' };
+  }
+  if (authState === 'recovery_interrupted') {
+    return routeKind === 'public' ? { type: 'allow' } : { type: 'redirect', href: '/auth/login' };
+  }
 
   if (authState === 'unauthenticated') {
     return routeKind === 'protected' ? { type: 'redirect', href: '/(tabs)' } : { type: 'allow' };
@@ -50,6 +66,7 @@ export const resolveRouteAccess = (
 
 export const classifyRoute = (segments: readonly string[]): RouteKind => {
   if (segments[0] === 'auth' && segments[1] === 'callback') return 'callback';
+  if (segments[0] === 'auth' && segments[1] === 'reset-password') return 'recovery';
   if (segments[0] === 'auth' && segments[1] === 'onboarding') return 'onboarding';
   if (segments[0] === 'auth') return 'public';
   if (segments[0] === '(tabs)' && (!segments[1] || segments[1] === 'index')) return 'public';

@@ -19,7 +19,7 @@ test('parser accepts a supported error callback without exposing its details', (
 test('parser preserves recovery intent without treating it as a login callback', () => {
   assert.deepEqual(
     parseAuthCallbackUrl(`${AUTH_CALLBACK_URI}?type=recovery&code=recovery-code`),
-    { kind: 'recovery' },
+    { kind: 'recovery', code: 'recovery-code' },
   );
 });
 
@@ -36,5 +36,43 @@ for (const [name, url] of [
 ]) {
   test(`parser rejects ${name}`, () => {
     assert.deepEqual(parseAuthCallbackUrl(url), { kind: 'invalid', reason: 'invalid_callback' });
+  });
+}
+
+test('canonical recovery retains the decoded code regardless of query ordering', () => {
+  assert.deepEqual(parseAuthCallbackUrl(`${AUTH_CALLBACK_URI}?code=a%2Db&type=recovery`), { kind: 'recovery', code: 'a-b' });
+  assert.deepEqual(parseAuthCallbackUrl(`${AUTH_CALLBACK_URI}?type=signup&code=a`), { kind: 'code', code: 'a', intent: 'signup' });
+});
+
+for (const suffix of [
+  '?type=recovery', '?type=recovery&code=', '?type=recovery&code=%20',
+  '?type=recovery&code=a%20b', '?type=recovery&code=%00',
+  '?type=recovery&code=a&code=b', '?type=recovery&code=a&%63ode=b',
+  '?type=recovery&type=recovery&code=a', '?type=recovery&type=signup&code=a',
+  '?type=recovery&code=a&error=denied', '?type=recovery&code=a&error_code=expired',
+  '?type=recovery&code=a&error_description=secret', '?type=recovery&error=expired',
+  '?type=recovery&code=%E0%A4%A', '?type=recovery&code=a&unexpected=b',
+  '?type=recovery&code=a#', '?type=recovery&code=a#access_token=secret',
+  '?type=recovery&code=a&access_token=secret', '?type=recovery&code=a&refresh_token=secret',
+  '?type=recovery&code=a&redirect_uri=https%3A%2F%2Fevil.example',
+  '?type=recovery&code=a&next=%2Fdashboard', '?type=Recovery&code=a',
+  '?type=%20recovery&code=a', '?type=recovery%20&code=a', '?Type=recovery&code=a',
+]) {
+  test(`recovery parser rejects ${suffix}`, () => {
+    assert.equal(parseAuthCallbackUrl(AUTH_CALLBACK_URI + suffix).kind, 'invalid');
+  });
+}
+
+for (const incoming of [
+  'COM.MYCHAWGEE:///auth/callback?type=recovery&code=a',
+  'com.mychawgee:///Auth/callback?type=recovery&code=a',
+  'com.mychawgee://auth/callback?type=recovery&code=a',
+  'com.mychawgee:///auth/callback/../callback?type=recovery&code=a',
+  `${AUTH_CALLBACK_URI}?type=recovery&co\tde=a`,
+  ` ${AUTH_CALLBACK_URI}?type=recovery&code=a`,
+  `${AUTH_CALLBACK_URI}?type=recovery&code=a `,
+]) {
+  test('recovery parser rejects noncanonical envelope', () => {
+    assert.equal(parseAuthCallbackUrl(incoming).kind, 'invalid');
   });
 }

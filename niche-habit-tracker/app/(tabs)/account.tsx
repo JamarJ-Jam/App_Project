@@ -141,7 +141,7 @@ export default function AccountScreen() {
     setThemePreference,
   } = useTheme();
 
-  const { user, signOut, updateAccountIdentity } = useAuth();
+  const { user, signOut, updateAccountIdentity, requestPasswordRecovery } = useAuth();
   const router = useRouter();
 
   const [openSection, setOpenSection] =
@@ -518,11 +518,25 @@ export default function AccountScreen() {
     }
   };
 
-  const handlePasswordReset = () => {
-    Alert.alert(
-      'Reset Password',
-      'Password reset will be enabled when the production authentication service is connected. The current local authentication flow does not store or validate passwords yet.'
-    );
+  const [passwordResetSubmitting, setPasswordResetSubmitting] = useState(false);
+
+  const handlePasswordReset = async () => {
+    if (!user || user.isGuest || passwordResetSubmitting) return;
+    setPasswordResetSubmitting(true);
+    try {
+      const result = await requestPasswordRecovery(user.email);
+      if (result.status === 'failed' && result.reason === 'invalid_email') {
+        Alert.alert('Unable to Send', 'Add a valid email to your account before requesting a reset link.');
+        return;
+      }
+      if (result.status === 'failed') {
+        Alert.alert('Unable to Send', 'Unable to send a reset link right now. Please try again in a moment.');
+        return;
+      }
+      Alert.alert('Check Your Email', "If an account exists for this email, we'll send a password reset link.");
+    } finally {
+      setPasswordResetSubmitting(false);
+    }
   };
 
   const handleSignOut = () => {
@@ -693,7 +707,8 @@ export default function AccountScreen() {
 
                 <TouchableOpacity
                   onPress={handlePasswordReset}
-                  style={[styles.identityActionButton, { borderColor: theme.border }]}
+                  disabled={passwordResetSubmitting}
+                  style={[styles.identityActionButton, { borderColor: theme.border, opacity: passwordResetSubmitting ? 0.6 : 1 }]}
                 >
                   <Ionicons name="key-outline" size={16} color={theme.textSecondary} />
                   <Text style={[styles.identityActionText, { color: theme.textSecondary }]}>

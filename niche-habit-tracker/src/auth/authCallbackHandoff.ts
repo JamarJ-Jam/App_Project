@@ -1,9 +1,9 @@
 import type { CallbackResult } from './authCallbackCoordinator';
 // @ts-expect-error Native Node test loading requires the explicit TypeScript extension.
-import { AUTH_CALLBACK_URI } from './authRedirect.ts';
+import { AUTH_CALLBACK_URI, parseAuthCallbackUrl } from './authRedirect.ts';
 
 export type HandoffSnapshot =
-  | { status: 'waiting' | 'processing' }
+  | { status: 'waiting' | 'processing'; intent?: 'recovery' }
   | { status: 'complete'; result: CallbackResult };
 
 type LinkingSource = {
@@ -47,7 +47,11 @@ export class AuthCallbackHandoff {
       if (this.admitted.has(url)) return;
       this.admitted.add(url);
       const revision = ++this.revision;
-      this.publish({ status: 'processing' });
+      // Presentation hint only; the original URL still enters the one admission
+      // path unchanged. This flag is never consulted for route authorization.
+      const parsed = parseAuthCallbackUrl(url);
+      const recovery = parsed.kind === 'recovery' || (parsed.kind === 'invalid' && parsed.intent === 'recovery');
+      this.publish({ status: 'processing', ...(recovery ? { intent: 'recovery' as const } : {}) });
       void (async () => {
         let result: CallbackResult;
         try {
