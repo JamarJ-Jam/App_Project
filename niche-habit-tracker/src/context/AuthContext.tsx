@@ -1,6 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Session } from '@supabase/supabase-js';
+import * as WebBrowser from 'expo-web-browser';
+import { evaluateProviderIdentity, type AuthProvider as IdentityProvider } from '../auth/authProviderIdentity';
 import { getSupabaseClient } from '../auth/supabaseClient';
 import { AuthLifecycleCoordinator, RecoveryEvidenceMismatchError } from '../auth/authLifecycle';
 import { AuthCallbackCoordinator, type CallbackResult } from '../auth/authCallbackCoordinator';
@@ -22,7 +24,7 @@ export interface User {
   email: string;
   name?: string;
   isGuest: boolean;
-  provider?: 'email';
+  provider?: IdentityProvider;
 }
 
 export type AuthState =
@@ -48,8 +50,8 @@ interface AuthContextType {
   isLoading: boolean;
   signIn: (email: string, password: string) => Promise<AuthActionResult>;
   signUp: (email: string, password: string, name?: string) => Promise<AuthActionResult>;
-  processAuthCallback: (incomingUrl: string) => Promise<CallbackResult>;
-  signInWithGoogle: () => Promise<void>;
+  processAuthCallback: (incomingUrl: string, googleProvenance?: { owner: number; flowId: string }) => Promise<CallbackResult>;
+  signInWithGoogle: () => Promise<CallbackResult>;
   signInAsGuest: () => Promise<void>;
   updateAccountIdentity: (email: string, name?: string) => Promise<void>;
   requestPasswordRecovery: (email: string) => Promise<PasswordRecoveryRequestResult>;
@@ -66,7 +68,7 @@ const AuthContext = createContext<AuthContextType>({
   signIn: async () => ({ status: 'verification_required' }),
   signUp: async () => ({ status: 'verification_required' }),
   processAuthCallback: async () => ({ status: 'failed', reason: 'invalid_callback' }),
-  signInWithGoogle: async () => {},
+  signInWithGoogle: async () => ({ status: 'failed', reason: 'verification_failed' }),
   signInAsGuest: async () => {},
   updateAccountIdentity: async () => {},
   requestPasswordRecovery: async () => ({ status: 'failed', reason: 'request_failed' }),
@@ -77,20 +79,17 @@ const AuthContext = createContext<AuthContextType>({
 const AUTH_STORAGE_KEY = '@accountability_user_session';
 const LEGACY_MOCK_STORAGE_KEY = '@accountability_legacy_mock_session';
 
-const isVerifiedEmailSession = (session: Session): boolean =>
-  Boolean(session.user.email_confirmed_at);
-
 const safeAuthMessage = (operation: 'sign in' | 'create account'): string =>
   `Unable to ${operation}. Check your details and try again.`;
 
-const accountToUser = (session: Session, account: BootstrapAccount): User => ({
+const accountToUser = (session: Session, account: BootstrapAccount, provider: IdentityProvider): User => ({
   id: account.id,
   email: session.user.email ?? '',
   name: typeof session.user.user_metadata?.full_name === 'string'
     ? session.user.user_metadata.full_name
     : undefined,
   isGuest: false,
-  provider: 'email',
+  provider,
 });
 
 const guestUser = (): User => ({
@@ -110,6 +109,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const authCallback = useRef(new AuthCallbackCoordinator());
   const callbackRequests = useRef(new Map<string, { intent?: AuthCallbackIntent; promise: Promise<CallbackResult> }>());
   const activeCallbackOwner = useRef<number | null>(null);
+  const googleOperation = useRef<{ owner: number; flowId: string } | null>(null);
   const ready = useRef(false);
   const sdkMutation = useRef(false);
 
@@ -159,6 +159,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const invalidateAuthWork = () => {
     authCallback.current.cancel();
+    googleOperation.current = null;
     const owner = authLifecycle.current.nextOperation();
     if (authLifecycle.current.recoveryPhase === 'interrupted') publishRestriction();
     return owner;
@@ -176,7 +177,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { status: 'verification_required' };
     }
 
-    if (!isVerifiedEmailSession(session)) {
+    const identity = evaluateProviderIdentity(session.user);
+    if (identity.status === 'unsupported_identity') {
+      // Revoke pending bootstrap even if the subject/token did not change.
+      authLifecycle.current.invalidate();
+      clearAuthenticatedState();
+      setAuthState('bootstrap_failed');
+      setAuthError('Unable to verify your sign-in provider.');
+      throw new Error('Unable to initialize your Chawgee account. Sign-in provider is not supported.');
+    }
+    if (identity.status === 'verification_required') {
+      authLifecycle.current.invalidate();
       authLifecycle.current.beginSession(session.user.id, session.access_token);
       setUser(null);
       setAuthError(null);
@@ -196,7 +207,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!authLifecycle.current.isCurrent(generation, session.user.id, session.access_token)) {
           return { status: 'verification_required' };
         }
-        const nextUser = accountToUser(session, account);
+        const nextUser = accountToUser(session, account, identity.provider);
         setUser(nextUser);
         setAuthError(null);
         setPendingVerificationEmail(null);
@@ -225,6 +236,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let mounted = true;
     let client: Awaited<ReturnType<typeof getSupabaseClient>> | undefined;
     let subscription: { unsubscribe: () => void } | undefined;
+    const callbackCoordinator = authCallback.current;
+    const lifecycleCoordinator = authLifecycle.current;
 
     const restoreOwner = authLifecycle.current.operationGeneration;
     const restore = async () => {
@@ -342,11 +355,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       mounted = false;
       ready.current = false;
+      callbackCoordinator.cancel();
+      googleOperation.current = null;
+      lifecycleCoordinator.nextOperation();
       subscription?.unsubscribe();
     };
   }, [reconcileSession, resolveRecovery, publishRestriction]);
 
-  const processAuthCallback = useCallback((incomingUrl: string): Promise<CallbackResult> => {
+  const processAuthCallback = useCallback((incomingUrl: string, googleProvenance?: { owner: number; flowId: string }): Promise<CallbackResult> => {
+    if (googleProvenance && (!authLifecycle.current.ownsOperation(googleProvenance.owner) ||
+        googleOperation.current?.owner !== googleProvenance.owner ||
+        googleOperation.current.flowId !== googleProvenance.flowId)) {
+      return Promise.resolve({ status: 'failed', reason: 'stale_operation' });
+    }
     const parsed = parseAuthCallbackUrl(incomingUrl);
     if (parsed.kind !== 'code' && parsed.kind !== 'recovery') {
       return authCallback.current.process(incomingUrl, {
@@ -360,8 +381,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (existing) return existing.intent === intent ? existing.promise
       : Promise.resolve({ status: 'failed', reason: 'recovery_evidence_mismatch', intent: 'recovery' });
     if (authCallback.current.hasConsumedCode(parsed.code)) return Promise.resolve({ status: 'replayed', reason: 'replayed', ...resultIntent });
+    const admittedGoogle = intent === undefined && (googleProvenance ?? googleOperation.current) &&
+      authLifecycle.current.ownsOperation((googleProvenance ?? googleOperation.current!).owner) &&
+      googleOperation.current?.owner === (googleProvenance ?? googleOperation.current!).owner &&
+      googleOperation.current.flowId === (googleProvenance ?? googleOperation.current!).flowId
+      ? (googleProvenance ?? googleOperation.current)
+      : null;
+    if (googleProvenance && !admittedGoogle) return Promise.resolve({ status: 'failed', reason: 'stale_operation' });
     authCallback.current.cancel();
-    const owner = authLifecycle.current.nextOperation();
+    const owner = admittedGoogle?.owner ?? authLifecycle.current.nextOperation();
+    if (!admittedGoogle) googleOperation.current = null;
     if (authLifecycle.current.recoveryPhase === 'interrupted') publishRestriction();
     const pending = authLifecycle.current.runExclusive(async (): Promise<CallbackResult> => {
       const lifecycle = authLifecycle.current;
@@ -373,8 +402,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!lifecycle.ownsOperation(owner)) return { status: 'failed', reason: 'stale_operation', ...resultIntent };
         activeCallbackOwner.current = owner;
         const result = await authCallback.current.process(incomingUrl, {
-          exchangeCode: async (code) => {
-            const exchange = await client.auth.exchangeCodeForSession(code);
+          exchangeCode: async (code, options) => {
+            const exchange = await client.auth.exchangeCodeForSession(code, options);
             // The installed SDK returns redirectType at runtime, but its public
             // exchange declaration omits it. Narrow rather than asserting it.
             if (exchange.data.session && 'redirectType' in exchange.data && exchange.data.redirectType === 'recovery') {
@@ -382,6 +411,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
             return exchange;
           },
+          flowId: admittedGoogle?.flowId,
           reconcileSession,
           getCurrentSession: async () => {
             const current = await client.auth.getSession();
@@ -393,6 +423,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             publishRestriction();
           },
           admitSession: async (session, redirectType, callbackIntent) => {
+            const identity = evaluateProviderIdentity(session.user);
+            if (admittedGoogle) {
+              if (identity.status !== 'eligible' || identity.provider !== 'google') {
+                return { status: 'failed', reason: 'verification_failed' };
+              }
+            }
             let recovery: boolean;
             try {
               recovery = await lifecycle.finishCallback(owner, session, redirectType, callbackIntent);
@@ -405,6 +441,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (recovery) {
               publishRestriction();
               return { status: 'recovery' };
+            }
+            if (identity.status === 'eligible' && identity.provider === 'google' && !admittedGoogle) {
+              return { status: 'failed', reason: 'verification_failed' };
             }
             return null;
           },
@@ -422,6 +461,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { status: 'failed', reason: 'verification_failed', ...resultIntent };
       } finally {
         activeCallbackOwner.current = null;
+        if (admittedGoogle && googleOperation.current?.owner === admittedGoogle.owner) googleOperation.current = null;
       }
     });
     callbackRequests.current.set(parsed.code, { intent, promise: pending });
@@ -502,8 +542,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const signInWithGoogle = async () => {
-    throw new Error('Google sign-in is not available yet.');
+  const signInWithGoogle = async (): Promise<CallbackResult> => {
+    const owner = invalidateAuthWork();
+    let authorizationUrl: string;
+    let flowId: string;
+    try {
+      const initiation = await authLifecycle.current.runExclusive(async () => {
+        if (!authLifecycle.current.ownsOperation(owner)) throw new Error('stale');
+        await authLifecycle.current.checkInterruption();
+        const client = await getSupabaseClient();
+        await resolveRecovery(client);
+        if (!authLifecycle.current.ownsOperation(owner)) throw new Error('stale');
+
+        const { data, error } = await mutateSdkSession(() => client.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: AUTH_CALLBACK_URI,
+            skipBrowserRedirect: true,
+          },
+        }));
+
+        if (!authLifecycle.current.ownsOperation(owner) || error || !data?.url || !data.flowId) throw new Error('Unable to start Google sign-in.');
+        googleOperation.current = { owner, flowId: data.flowId };
+        return { url: data.url, flowId: data.flowId };
+      });
+      authorizationUrl = initiation.url;
+      flowId = initiation.flowId;
+    } catch {
+      if (authLifecycle.current.ownsOperation(owner)) setAuthError('Unable to start Google sign-in.');
+      return { status: 'failed', reason: 'verification_failed' };
+    }
+
+    if (!authLifecycle.current.ownsOperation(owner) || googleOperation.current?.flowId !== flowId) {
+      return { status: 'failed', reason: 'stale_operation' };
+    }
+    let browserResult: Awaited<ReturnType<typeof WebBrowser.openAuthSessionAsync>>;
+    try {
+      browserResult = await WebBrowser.openAuthSessionAsync(authorizationUrl, AUTH_CALLBACK_URI);
+    } catch {
+      browserResult = { type: WebBrowser.WebBrowserResultType.DISMISS };
+    }
+    if (browserResult.type === 'cancel' || browserResult.type === 'dismiss' || browserResult.type === 'locked') {
+      if (googleOperation.current?.owner === owner) {
+        googleOperation.current = null;
+        authLifecycle.current.nextOperation();
+      }
+      return { status: 'failed', reason: 'verification_failed' };
+    }
+    if (browserResult.type !== 'success' || !browserResult.url) return { status: 'failed', reason: 'verification_failed' };
+    return processAuthCallback(browserResult.url, { owner, flowId });
   };
 
   const signInAsGuest = async () => {

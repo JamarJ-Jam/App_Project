@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -26,6 +26,8 @@ export default function SignUpScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const googlePending = useRef(false);
+  const [googleSubmitting, setGoogleSubmitting] = useState(false);
 
   const handleSignUp = async () => {
     if (!name.trim() || !email.trim() || !password.trim()) {
@@ -46,11 +48,20 @@ export default function SignUpScreen() {
   };
 
   const handleGoogleSignUp = async () => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (googlePending.current) return;
+    googlePending.current = true;
+    setGoogleSubmitting(true);
     try {
-      await signInWithGoogle();
-    } catch (error) {
-      Alert.alert('Google Sign Up', error instanceof Error ? error.message : 'Google sign-up is not available yet.');
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      const result = await signInWithGoogle();
+      if (result.status === 'failed' && result.reason !== 'stale_operation') {
+        Alert.alert('Google Sign Up', 'Unable to start Google sign-in. Please try again.');
+      }
+    } catch {
+      Alert.alert('Google Sign Up', 'Unable to start Google sign-in. Please try again.');
+    } finally {
+      googlePending.current = false;
+      setGoogleSubmitting(false);
     }
   };
 
@@ -115,7 +126,7 @@ export default function SignUpScreen() {
               <View style={[styles.divider, { backgroundColor: theme.border }]} />
             </View>
 
-            <TouchableOpacity style={[styles.socialBtn, { borderColor: theme.border, backgroundColor: theme.inputBackground }]} onPress={handleGoogleSignUp}>
+            <TouchableOpacity style={[styles.socialBtn, { borderColor: theme.border, backgroundColor: theme.inputBackground }]} onPress={handleGoogleSignUp} disabled={googleSubmitting} accessibilityState={{ disabled: googleSubmitting, busy: googleSubmitting }}>
               <Ionicons name="logo-google" size={18} color="#EA4335" />
               <Text style={[styles.socialBtnText, { color: theme.textPrimary }]}>Sign Up with Google</Text>
             </TouchableOpacity>

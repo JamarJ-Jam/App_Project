@@ -46,6 +46,11 @@ function renderLogin(overrides = {}) {
     };
     return [stateCells[idx], setState];
   };
+  const useRef = (initial) => {
+    const idx = cellIndex++;
+    if (idx >= stateCells.length) stateCells.push({ current: initial });
+    return stateCells[idx];
+  };
 
   const alertCalls = [];
   const routerMock = { replace: () => {}, back: () => {} };
@@ -69,7 +74,7 @@ function renderLogin(overrides = {}) {
   runInNewContext(outputText, {
     exports,
     require(name) {
-      if (name === 'react') return { createElement: (type, props, ...children) => ({ type, props, children }), useState };
+      if (name === 'react') return { createElement: (type, props, ...children) => ({ type, props, children }), useRef, useState };
       if (name === 'react-native') return {
         Alert: { alert: (...args) => { alertCalls.push(args); } },
         KeyboardAvoidingView: 'KeyboardAvoidingView',
@@ -204,4 +209,28 @@ test('requesting an email never touches authState (invariant guarded by fixed mo
   find(view.tree, (node) => isTextInput(node)).props.onChangeText('someone@example.test');
   await find(view.tree, (node) => isTouchable(node) && /Send Reset Link/.test(textOf(node))).props.onPress();
   assert.equal(view.authMock.authState, 'unauthenticated');
+});
+
+test('Login Google action prevents double tap while browser flow is pending', async () => {
+  let calls = 0;
+  let resolveGoogle;
+  const pending = new Promise((resolve) => { resolveGoogle = resolve; });
+  const view = renderLogin({ auth: { signInWithGoogle: async () => { calls += 1; return pending; } } });
+  const google = find(view.tree, (node) => isTouchable(node) && /Continue with Google/.test(textOf(node)));
+
+  const first = google.props.onPress();
+  find(view.tree, (node) => isTouchable(node) && /Continue with Google/.test(textOf(node))).props.onPress();
+  resolveGoogle({ status: 'failed', reason: 'verification_failed' });
+  await first;
+
+  assert.equal(calls, 1);
+  assert.equal(view.alertCalls.length, 1);
+  assert.equal(view.alertCalls[0][0], 'Google Sign In');
+});
+
+test('Login Google stale result is silent and raw provider errors are not exposed', async () => {
+  const view = renderLogin({ auth: { signInWithGoogle: async () => ({ status: 'failed', reason: 'stale_operation' }) } });
+  find(view.tree, (node) => isTouchable(node) && /Continue with Google/.test(textOf(node))).props.onPress();
+  await Promise.resolve();
+  assert.equal(view.alertCalls.length, 0);
 });

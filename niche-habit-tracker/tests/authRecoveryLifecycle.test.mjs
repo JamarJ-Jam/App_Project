@@ -6,12 +6,17 @@ import ts from 'typescript';
 import * as lifecycleModule from '../src/auth/authLifecycle.ts';
 import * as callbackModule from '../src/auth/authCallbackCoordinator.ts';
 import * as redirectModule from '../src/auth/authRedirect.ts';
+import * as providerModule from '../src/auth/authProviderIdentity.ts';
 import { resolveRouteAccess } from '../src/auth/routeAccess.ts';
 
 const { RECOVERY_INTERRUPTION_KEY: markerKey, RECOVERY_INTERRUPTION_VALUE: markerValue } = lifecycleModule;
 const url = (code = 'synthetic-code') => `${redirectModule.AUTH_CALLBACK_URI}?code=${code}`;
 const session = (id = 'recovery', token = `${id}-synthetic-token`) => ({
-  user: { id, email: `${id}@example.test`, email_confirmed_at: '2026-01-01', user_metadata: {} },
+  user: {
+    id, email: `${id}@example.test`, email_confirmed_at: '2026-01-01', user_metadata: {},
+    app_metadata: { provider: 'email', providers: ['email'] },
+    identities: [{ id, identity_id: `${id}-identity`, user_id: id, provider: 'email' }],
+  },
   access_token: token,
 });
 const deferred = () => {
@@ -31,7 +36,7 @@ const { outputText } = ts.transpileModule(source, {
 function harness(options = {}) {
   const disk = options.disk ?? { metadata: new Map(), sdkSession: null, app: new Map() };
   const failures = options.failures ?? {};
-  const calls = { bootstrap: [], exchange: 0, login: 0, signOut: [], writes: [], states: [], updateUser: [] };
+  const calls = { bootstrap: [], exchange: 0, exchangeOptions: [], googleStart: 0, oauthOptions: [], browser: [], login: 0, signOut: [], writes: [], states: [], updateUser: [] };
   const listeners = new Set();
   const storage = {
     async getItem(key) { if (failures.read) throw new Error('synthetic storage failure'); return disk.metadata.get(key) ?? null; },
@@ -51,15 +56,17 @@ function harness(options = {}) {
       void Promise.resolve().then(() => listener('INITIAL_SESSION', disk.sdkSession));
       return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
     },
-    async exchangeCodeForSession() {
+    async exchangeCodeForSession(_code, exchangeOptions) {
       calls.exchange += 1;
+      calls.exchangeOptions.push(exchangeOptions ?? null);
+      if (options.expectedFlowId) assert.equal(exchangeOptions?.flowId, options.expectedFlowId);
       assert.equal(disk.metadata.get(markerKey), markerValue, 'restriction precedes SDK persistence');
       if (options.exchangeError) return { data: { session: null }, error: options.exchangeError };
       if (options.failBeforePersistence) throw new Error('synthetic exchange failure');
-      const value = options.exchangeSession ?? session();
+      const value = options.exchangeSession ?? (exchangeOptions?.flowId ? providerSession('google') : session());
       disk.sdkSession = value;
       options.persisted?.resolve();
-      for (const event of options.events ?? ['PASSWORD_RECOVERY']) await emit(event, value);
+      for (const event of options.events ?? (exchangeOptions?.flowId ? ['SIGNED_IN'] : ['PASSWORD_RECOVERY'])) await emit(event, value);
       if (options.staleRecoveryEvent) await emit('PASSWORD_RECOVERY', options.staleRecoveryEvent);
       if (options.exchangeWait) await options.exchangeWait.promise;
       if (options.exchangeThrows) throw new Error('synthetic provider detail');
@@ -68,9 +75,20 @@ function harness(options = {}) {
     async signInWithPassword() {
       calls.login += 1;
       assert.equal(disk.metadata.has(markerKey), false, 'old restriction cleared before new login persists');
-      disk.sdkSession = session('new-login');
+      disk.sdkSession = options.loginSession ?? session('new-login');
       await emit('SIGNED_IN');
       return { data: { session: disk.sdkSession }, error: null };
+    },
+    async signInWithOAuth({ provider, options: oauthOptions }) {
+      calls.googleStart += 1;
+      calls.oauthOptions.push({ provider, options: oauthOptions });
+      assert.equal(provider, 'google');
+      assert.equal(oauthOptions?.redirectTo, redirectModule.AUTH_CALLBACK_URI);
+      assert.equal(oauthOptions?.skipBrowserRedirect, true);
+      const redirectTo = oauthOptions?.redirectTo ?? redirectModule.AUTH_CALLBACK_URI;
+      if (options.oauthError) return { data: { provider, url: null, flowId: null }, error: options.oauthError };
+      const oauthUrl = options.oauthUrl ?? `${redirectTo}?code=google-oauth-code`;
+      return { data: { provider, url: options.missingOauthUrl ? null : oauthUrl, flowId: options.flowIds?.[calls.googleStart - 1] ?? options.flowId ?? 'google-flow-id' }, error: null };
     },
     async signUp() { return { data: { session: null, user: { email: 'new@example.test' } }, error: null }; },
     async signOut(scope) {
@@ -133,6 +151,16 @@ function harness(options = {}) {
       if (name.endsWith('/authLifecycle')) return lifecycleModule;
       if (name.endsWith('/authCallbackCoordinator')) return callbackModule;
       if (name.endsWith('/authRedirect')) return redirectModule;
+      if (name.endsWith('/authProviderIdentity')) return providerModule;
+      if (name === 'expo-web-browser') return { WebBrowserResultType: { DISMISS: 'dismiss' }, openAuthSessionAsync: async (authorizationUrl, redirectUri) => {
+        calls.browser.push([authorizationUrl, redirectUri]);
+        if (options.browserError) throw options.browserError;
+        const browserIndex = calls.browser.length - 1;
+        if (options.browserWaits?.[browserIndex]) await options.browserWaits[browserIndex].promise;
+        else if (options.browserWait) await options.browserWait.promise;
+        if (options.browserResult) return options.browserResult;
+        return { type: 'success', url: options.browserUrls?.[browserIndex] ?? options.googleUrl ?? `${redirectModule.AUTH_CALLBACK_URI}?code=google-oauth-code` };
+      } };
       if (name.endsWith('/passwordRecoveryRequest')) return {
         isValidRecoveryEmail: (email) => email.length > 0 && !/\s/.test(email) && email.includes('@'),
         requestPasswordRecovery: async () => { throw new Error('requestPasswordRecovery must not be exercised by lifecycle tests'); },
@@ -144,7 +172,7 @@ function harness(options = {}) {
         calls.bootstrap.push(token);
         if (options.bootstrapWait) await options.bootstrapWait.promise;
         if (options.bootstrapFails) throw new Error('Unable to initialize your Chawgee account.');
-        return { id: 'backend-account-id' };
+        return { id: options.accountsByToken?.[token] ?? 'backend-account-id' };
       } };
       throw new Error(`Unexpected dependency: ${name}`);
     },
@@ -815,4 +843,308 @@ test('no password or recovery credential ever appears in durable storage', async
   for (const [, value] of h.disk.metadata) assert.equal(String(value).includes(newPassword), false);
   for (const [, value] of h.disk.app) assert.equal(String(value).includes(newPassword), false);
   assert.equal(h.calls.writes.some(([, value]) => String(value).includes(newPassword)), false);
+});
+
+const providerSession = (provider, id = provider) => {
+  const value = session(id);
+  value.user.email = 'same@example.test';
+  value.user.app_metadata = { provider, providers: [provider] };
+  value.user.identities[0].provider = provider;
+  if (provider === 'google') delete value.user.email_confirmed_at;
+  return value;
+};
+
+for (const provider of ['email', 'google']) {
+  test(`${provider} restoration maps trusted provider and backend account ID`, async () => {
+    const value = providerSession(provider);
+    const disk = { metadata: new Map(), sdkSession: value, app: new Map() };
+    const h = await started({ disk });
+    assert.equal(h.value.authState, 'authenticated');
+    assert.equal(h.value.user.provider, provider);
+    assert.equal(h.value.user.id, 'backend-account-id');
+    assert.deepEqual(h.calls.bootstrap, [value.access_token]);
+    assert.equal(JSON.parse(disk.app.get('@accountability_user_session')).provider, provider);
+    await h.value.signOut();
+    assert.equal(h.value.user, null);
+  });
+}
+
+test('same email on distinct identities keeps token-selected backend accounts separate', async () => {
+  const email = providerSession('email', 'email-subject');
+  const google = providerSession('google', 'google-subject');
+  assert.equal(email.user.email, google.user.email);
+  const h = await started({
+    disk: { metadata: new Map(), sdkSession: email, app: new Map() },
+    accountsByToken: { [email.access_token]: 'email-account', [google.access_token]: 'google-account' },
+  });
+  assert.equal(h.value.user.id, 'email-account');
+  await h.value.signOut();
+  h.disk.sdkSession = google;
+  await h.emit('SIGNED_IN');
+  await flush();
+  assert.equal(h.value.user.id, 'google-account');
+  assert.equal(h.value.user.provider, 'google');
+  assert.deepEqual(h.calls.bootstrap, [email.access_token, google.access_token]);
+});
+
+test('unsupported, missing and conflicting provider evidence never bootstraps', async () => {
+  for (const value of [providerSession('unknown'), providerSession('apple'), session('missing'), providerSession('google')]) {
+    if (value.user.id === 'missing') delete value.user.identities;
+    if (value.user.id === 'google') value.user.app_metadata.provider = 'email';
+    const h = await started();
+    h.disk.sdkSession = value;
+    await h.emit('SIGNED_IN');
+    await flush();
+    assert.equal(h.value.authState, 'bootstrap_failed');
+    assert.equal(h.value.pendingVerificationEmail, null);
+    assert.equal(h.value.user, null);
+    assert.equal(h.calls.bootstrap.length, 0);
+  }
+});
+
+for (const rejection of ['ambiguous', 'unverified']) {
+  test(`${rejection} USER_UPDATED invalidates same-token bootstrap already in flight`, async () => {
+    const bootstrapWait = deferred();
+    const h = await started({ bootstrapWait });
+    const value = session('pending');
+    h.disk.sdkSession = value;
+    await h.emit('SIGNED_IN');
+    await flush();
+    assert.equal(h.calls.bootstrap.length, 1);
+    h.disk.sdkSession = { ...value, user: { ...value.user } };
+    if (rejection === 'ambiguous') h.disk.sdkSession.user.app_metadata = { provider: 'google' };
+    else delete h.disk.sdkSession.user.email_confirmed_at;
+    await h.emit('USER_UPDATED');
+    await flush();
+    bootstrapWait.resolve();
+    await flush();
+    assert.equal(h.value.user, null);
+    assert.equal(h.value.authState, rejection === 'ambiguous' ? 'bootstrap_failed' : 'verification_required');
+    assert.equal(h.calls.states.includes('authenticated'), false);
+  });
+}
+
+test('Google event bursts deduplicate in-flight bootstrap and refresh retains provider', async () => {
+  const bootstrapWait = deferred();
+  const h = await started({ bootstrapWait });
+  h.disk.sdkSession = providerSession('google');
+  for (const event of ['SIGNED_IN', 'INITIAL_SESSION', 'USER_UPDATED', 'TOKEN_REFRESHED']) await h.emit(event);
+  await flush();
+  assert.equal(h.calls.bootstrap.length, 1);
+  bootstrapWait.resolve();
+  await flush();
+  assert.equal(h.value.user.provider, 'google');
+  h.disk.sdkSession = { ...h.disk.sdkSession, access_token: 'refreshed-google-token' };
+  await h.emit('TOKEN_REFRESHED');
+  await flush();
+  assert.equal(h.calls.bootstrap.length, 2);
+  assert.equal(h.value.user.provider, 'google');
+});
+
+test('Google sign-in starts OAuth and completes through the existing callback’ lifecycle', async () => {
+  const h = await started({
+    googleUrl: `${redirectModule.AUTH_CALLBACK_URI}?code=google-oauth-code`,
+    expectedFlowId: 'google-flow-id',
+  });
+
+  const result = await h.value.signInWithGoogle();
+  assert.equal(result.status, 'authenticated');
+  assert.equal(h.calls.googleStart, 1);
+  assert.equal(h.calls.exchange, 1);
+  assert.equal(h.value.user.provider, 'google');
+  assert.equal(h.value.authState, 'authenticated');
+});
+
+test('Google initiation does not authenticate before the browser callback', async () => {
+  const browserWait = deferred();
+  const h = await started({ googleUrl: `${redirectModule.AUTH_CALLBACK_URI}?code=google-oauth-code`, browserWait });
+  const pending = h.value.signInWithGoogle();
+  await flush();
+  assert.equal(h.calls.googleStart, 1);
+  assert.equal(h.calls.exchange, 0);
+  assert.equal(h.calls.bootstrap.length, 0);
+  browserWait.resolve();
+  await pending;
+});
+
+test('Google initiation passes the canonical browser contract exactly once', async () => {
+  const h = await started({ expectedFlowId: 'flow-a', oauthUrl: `${redirectModule.AUTH_CALLBACK_URI}?code=contract-code` });
+  await h.value.signInWithGoogle();
+  assert.equal(h.calls.googleStart, 1);
+  assert.equal(JSON.stringify(h.calls.oauthOptions[0]), JSON.stringify({
+    provider: 'google',
+    options: { redirectTo: redirectModule.AUTH_CALLBACK_URI, skipBrowserRedirect: true },
+  }));
+  assert.equal(h.calls.browser.length, 1);
+  assert.equal(h.calls.browser[0][0], `${redirectModule.AUTH_CALLBACK_URI}?code=contract-code`);
+  assert.equal(h.calls.browser[0][1], redirectModule.AUTH_CALLBACK_URI);
+});
+
+test('Google browser cancellation and dismissal never exchange or bootstrap', async () => {
+  for (const type of ['cancel', 'dismiss']) {
+    const h = await started({ browserResult: { type } });
+    const result = await h.value.signInWithGoogle();
+    assert.equal(result.status, 'failed');
+    assert.equal(h.calls.exchange, 0);
+    assert.equal(h.calls.bootstrap.length, 0);
+  }
+});
+
+test('Google initiation and browser errors normalize without exposing raw details', async () => {
+  const initiation = await started({ oauthError: { message: 'provider-secret' } });
+  const initiationResult = await initiation.value.signInWithGoogle();
+  assert.equal(initiationResult.status, 'failed');
+  assert.equal(initiationResult.reason, 'verification_failed');
+  assert.equal(initiation.value.authError, 'Unable to start Google sign-in.');
+
+  const browser = await started({ browserError: new Error('browser-secret') });
+  const browserResult = await browser.value.signInWithGoogle();
+  assert.equal(browserResult.status, 'failed');
+  assert.equal(browserResult.reason, 'verification_failed');
+  assert.doesNotMatch(browser.value.authError ?? '', /browser-secret/);
+});
+
+test('Missing Google authorization URL fails safely without exchange', async () => {
+  const h = await started({ missingOauthUrl: true });
+  const result = await h.value.signInWithGoogle();
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, 'verification_failed');
+  assert.equal(h.calls.exchange, 0);
+});
+
+test('Google flow id is matched during exchange and never persisted', async () => {
+  const h = await started({ flowId: 'flow-a', expectedFlowId: 'flow-a' });
+  await h.value.signInWithGoogle();
+  assert.deepEqual(h.calls.exchangeOptions, [{ flowId: 'flow-a' }]);
+  for (const [, value] of h.disk.metadata) assert.doesNotMatch(value, /flow-a/);
+  for (const [, value] of h.disk.app) assert.doesNotMatch(String(value), /flow-a/);
+});
+
+test('logout, guest transition, and newer email login invalidate pending Google browser work', async () => {
+  for (const transition of ['signOut', 'signInAsGuest', 'signIn']) {
+    const browserWait = deferred();
+    const h = await started({ browserWait });
+    const google = h.value.signInWithGoogle();
+    await flush();
+    const next = h.value[transition]('new@example.test', 'password');
+    browserWait.resolve();
+    const result = await google;
+    assert.equal(result.status, 'failed');
+    assert.equal(result.reason, 'stale_operation');
+    await next;
+    assert.equal(h.calls.exchange, 0);
+  }
+});
+
+test('password recovery invalidates pending Google browser work', async () => {
+  const browserWait = deferred();
+  const h = await started({ browserWait });
+  const google = h.value.signInWithGoogle();
+  await flush();
+  const recovery = h.value.processAuthCallback(`${redirectModule.AUTH_CALLBACK_URI}?type=recovery&code=recovery-code`);
+  browserWait.resolve();
+  assert.equal((await google).status, 'failed');
+  assert.equal((await google).reason, 'stale_operation');
+  await recovery;
+  assert.equal(h.calls.exchange, 1);
+});
+
+test('unmount invalidates pending Google browser work', async () => {
+  const browserWait = deferred();
+  const h = await started({ browserWait });
+  const google = h.value.signInWithGoogle();
+  await flush();
+  h.unmount();
+  browserWait.resolve();
+  const result = await google;
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, 'stale_operation');
+  assert.equal(h.calls.exchange, 0);
+});
+
+test('old provider teardown cannot invalidate a new provider Google operation', async () => {
+  const oldBrowser = deferred();
+  const oldProvider = await started({ browserWait: oldBrowser, flowId: 'old-flow' });
+  const oldGoogle = oldProvider.value.signInWithGoogle();
+  await flush();
+  oldProvider.unmount();
+
+  const newProvider = await started({ flowId: 'new-flow', expectedFlowId: 'new-flow' });
+  const newResult = await newProvider.value.signInWithGoogle();
+  assert.equal(newResult.status, 'authenticated');
+  assert.equal(newProvider.calls.exchange, 1);
+
+  oldBrowser.resolve();
+  const oldResult = await oldGoogle;
+  assert.equal(oldResult.status, 'failed');
+  assert.equal(oldResult.reason, 'stale_operation');
+  assert.equal(newProvider.value.authState, 'authenticated');
+  assert.equal(newProvider.calls.exchange, 1);
+});
+
+test('admitted Google callback rejects an email-provider result before bootstrap', async () => {
+  const browserWait = deferred();
+  const h = await started({ browserWait, exchangeSession: session('email-result') });
+  const google = h.value.signInWithGoogle();
+  await flush();
+  const callback = h.value.processAuthCallback(url('google-email-result'));
+  const result = await callback;
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, 'verification_failed');
+  assert.equal(h.calls.bootstrap.length, 0);
+  browserWait.resolve();
+  await google;
+});
+
+test('Google callback with an invalidated operation cannot consume a newer flow', async () => {
+  const firstBrowser = deferred();
+  const h = await started({ browserWait: firstBrowser, flowId: 'flow-a' });
+  const first = h.value.signInWithGoogle();
+  await flush();
+  firstBrowser.resolve();
+  assert.equal((await first).status, 'authenticated');
+  assert.equal(h.calls.exchangeOptions[0].flowId, 'flow-a');
+});
+
+test('Google B supersedes A and A browser return cannot exchange or mutate B', async () => {
+  const aWait = deferred();
+  const bWait = deferred();
+  const h = await started({
+    browserWaits: [aWait, bWait],
+    browserUrls: [
+      `${redirectModule.AUTH_CALLBACK_URI}?code=google-a`,
+      `${redirectModule.AUTH_CALLBACK_URI}?code=google-b`,
+    ],
+    flowIds: ['flow-a', 'flow-b'],
+  });
+  const a = h.value.signInWithGoogle();
+  await flush();
+  const b = h.value.signInWithGoogle();
+  await flush();
+  aWait.resolve();
+  const aResult = await a;
+  assert.equal(aResult.status, 'failed');
+  assert.equal(aResult.reason, 'stale_operation');
+  assert.equal(h.calls.exchange, 0);
+  bWait.resolve();
+  const bResult = await b;
+  assert.equal(bResult.status, 'authenticated');
+  assert.deepEqual(h.calls.exchangeOptions.map((value) => value?.flowId), ['flow-b']);
+  assert.equal(h.calls.bootstrap.length, 1);
+});
+
+test('Google callback without an admitted operation cannot bootstrap as Google', async () => {
+  const h = await started({ exchangeSession: providerSession('google') });
+  const result = await h.value.processAuthCallback(url('unadmitted-google'));
+  assert.notEqual(result.status, 'authenticated');
+  assert.equal(h.calls.bootstrap.length, 0);
+});
+
+test('Google metadata cannot bypass password recovery restriction', async () => {
+  const h = await started({ exchangeSession: providerSession('google') });
+  assert.equal((await h.value.processAuthCallback(url())).status, 'recovery');
+  for (const event of ['INITIAL_SESSION', 'SIGNED_IN', 'USER_UPDATED', 'TOKEN_REFRESHED']) await h.emit(event);
+  await flush();
+  assert.equal(h.value.authState, 'recovery');
+  assert.equal(h.calls.bootstrap.length, 0);
 });

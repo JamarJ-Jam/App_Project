@@ -17,7 +17,8 @@ type ExchangeCode = (code: string) => Promise<{
 }>;
 
 type CallbackDependencies = {
-  exchangeCode: ExchangeCode;
+  exchangeCode: (code: string, options?: { flowId?: string }) => ReturnType<ExchangeCode>;
+  flowId?: string;
   reconcileSession: ReconcileSession;
   getCurrentSession?: () => Promise<Session | null>;
   beforeExchange?: (baseline: Session | null) => Promise<void>;
@@ -155,7 +156,7 @@ export class AuthCallbackCoordinator {
     dependencies: CallbackDependencies,
   ): Promise<CallbackResult> {
     try {
-      const exchange = await dependencies.exchangeCode(operation.code);
+      const exchange = await dependencies.exchangeCode(operation.code, dependencies.flowId ? { flowId: dependencies.flowId } : undefined);
       if (!this.isCurrent(operation)) return staleResult();
       if (exchange.error) return safeExchangeFailure(exchange.error);
 

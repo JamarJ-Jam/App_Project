@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -31,6 +31,8 @@ export default function LoginScreen() {
   const [recoveryEmail, setRecoveryEmail] = useState('');
   const [recoverySubmitting, setRecoverySubmitting] = useState(false);
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
+  const googlePending = useRef(false);
+  const [googleSubmitting, setGoogleSubmitting] = useState(false);
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
@@ -82,11 +84,20 @@ export default function LoginScreen() {
   };
 
   const handleGoogleAuth = async () => {
+    if (googlePending.current) return;
+    googlePending.current = true;
+    setGoogleSubmitting(true);
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      await signInWithGoogle();
-    } catch (error) {
-      Alert.alert('Google Sign In', error instanceof Error ? error.message : 'Google sign-in is not available yet.');
+      const result = await signInWithGoogle();
+      if (result.status === 'failed' && result.reason !== 'stale_operation') {
+        Alert.alert('Google Sign In', 'Unable to start Google sign-in. Please try again.');
+      }
+    } catch {
+      Alert.alert('Google Sign In', 'Unable to start Google sign-in. Please try again.');
+    } finally {
+      googlePending.current = false;
+      setGoogleSubmitting(false);
     }
   };
 
@@ -230,6 +241,8 @@ export default function LoginScreen() {
             <TouchableOpacity
               style={[styles.socialBtn, { borderColor: theme.border, backgroundColor: theme.inputBackground }]}
               onPress={handleGoogleAuth}
+              disabled={googleSubmitting}
+              accessibilityState={{ disabled: googleSubmitting, busy: googleSubmitting }}
             >
               <Ionicons name="logo-google" size={18} color="#EA4335" />
               <Text style={[styles.socialBtnText, { color: theme.textPrimary }]}>Continue with Google</Text>
