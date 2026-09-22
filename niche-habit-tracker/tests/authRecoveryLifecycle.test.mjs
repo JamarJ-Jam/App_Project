@@ -854,6 +854,15 @@ const providerSession = (provider, id = provider) => {
   return value;
 };
 
+const linkedProviderSession = (id = 'linked-subject') => {
+  const value = providerSession('email', id);
+  value.user.app_metadata = { provider: 'email', providers: ['email', 'google'] };
+  value.user.identities.push({
+    id: `${id}-google`, identity_id: `${id}-google-identity`, user_id: id, provider: 'google',
+  });
+  return value;
+};
+
 for (const provider of ['email', 'google']) {
   test(`${provider} restoration maps trusted provider and backend account ID`, async () => {
     const value = providerSession(provider);
@@ -885,6 +894,50 @@ test('same email on distinct identities keeps token-selected backend accounts se
   assert.equal(h.value.user.id, 'google-account');
   assert.equal(h.value.user.provider, 'google');
   assert.deepEqual(h.calls.bootstrap, [email.access_token, google.access_token]);
+});
+
+test('admitted Google callback accepts a coherent linked Supabase user as Google', async () => {
+  const linked = linkedProviderSession();
+  const h = await started({ exchangeSession: linked });
+  const result = await h.value.signInWithGoogle();
+  assert.equal(result.status, 'authenticated');
+  assert.equal(h.value.authState, 'authenticated');
+  assert.equal(h.value.user.provider, 'google');
+  assert.deepEqual(h.calls.bootstrap, [linked.access_token]);
+});
+
+test('unadmitted linked callback cannot select email from metadata or bootstrap', async () => {
+  const linked = linkedProviderSession();
+  const h = await started({ exchangeSession: linked, events: ['SIGNED_IN'] });
+  const result = await h.value.processAuthCallback(url('unadmitted-linked'));
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, 'verification_failed');
+  assert.equal(h.calls.exchange, 1);
+  assert.equal(h.value.authState, 'unauthenticated');
+  assert.equal(h.value.user, null);
+  assert.equal(h.calls.bootstrap.length, 0);
+});
+
+test('linked SDK event without operation provenance cannot select email or bootstrap', async () => {
+  const linked = linkedProviderSession();
+  const h = await started();
+  h.disk.sdkSession = linked;
+  await h.emit('SIGNED_IN');
+  await flush();
+  assert.equal(h.value.authState, 'bootstrap_failed');
+  assert.equal(h.value.user, null);
+  assert.equal(h.calls.bootstrap.length, 0);
+});
+
+test('password sign-in for a linked Supabase user still requires confirmed email', async () => {
+  const linked = linkedProviderSession();
+  delete linked.user.email_confirmed_at;
+  const h = await started({ loginSession: linked });
+  const result = await h.value.signIn('same@example.test', 'synthetic-password');
+  assert.equal(result.status, 'verification_required');
+  assert.equal(h.value.authState, 'verification_required');
+  assert.equal(h.value.user, null);
+  assert.equal(h.calls.bootstrap.length, 0);
 });
 
 test('unsupported, missing and conflicting provider evidence never bootstraps', async () => {

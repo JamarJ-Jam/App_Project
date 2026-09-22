@@ -165,7 +165,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return owner;
   };
 
-  const reconcileSession = useCallback(async (session: Session | null): Promise<AuthActionResult> => {
+  const reconcileSession = useCallback(async (session: Session | null, expectedProvider?: IdentityProvider): Promise<AuthActionResult> => {
     if (!authLifecycle.current.canReconcile) {
       publishRestriction();
       return { status: 'verification_required' };
@@ -177,7 +177,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { status: 'verification_required' };
     }
 
-    const identity = evaluateProviderIdentity(session.user);
+    const identity = expectedProvider === undefined && session.user.identities?.length !== 1
+      ? { status: 'unsupported_identity' as const }
+      : evaluateProviderIdentity(session.user, expectedProvider);
     if (identity.status === 'unsupported_identity') {
       // Revoke pending bootstrap even if the subject/token did not change.
       authLifecycle.current.invalidate();
@@ -388,6 +390,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ? (googleProvenance ?? googleOperation.current)
       : null;
     if (googleProvenance && !admittedGoogle) return Promise.resolve({ status: 'failed', reason: 'stale_operation' });
+    const callbackProvider: IdentityProvider | undefined = admittedGoogle ? 'google' : intent === 'signup' ? 'email' : undefined;
     authCallback.current.cancel();
     const owner = admittedGoogle?.owner ?? authLifecycle.current.nextOperation();
     if (!admittedGoogle) googleOperation.current = null;
@@ -412,7 +415,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return exchange;
           },
           flowId: admittedGoogle?.flowId,
-          reconcileSession,
+          reconcileSession: (session) => reconcileSession(session, callbackProvider),
           getCurrentSession: async () => {
             const current = await client.auth.getSession();
             if (current.error) throw new Error('Unable to read authentication state.');
@@ -423,7 +426,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             publishRestriction();
           },
           admitSession: async (session, redirectType, callbackIntent) => {
-            const identity = evaluateProviderIdentity(session.user);
+            if (callbackProvider === undefined && session.user.identities?.length !== 1) {
+              return { status: 'failed', reason: 'verification_failed' };
+            }
+            const identity = evaluateProviderIdentity(session.user, callbackProvider);
             if (admittedGoogle) {
               if (identity.status !== 'eligible' || identity.provider !== 'google') {
                 return { status: 'failed', reason: 'verification_failed' };
@@ -495,7 +501,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           throw new Error(safeAuthMessage('sign in'));
         }
         if (!data.session) throw new Error(safeAuthMessage('sign in'));
-        return await reconcileSession(data.session);
+        return await reconcileSession(data.session, 'email');
       } catch (error) {
         const message = error instanceof Error && error.message.includes('Chawgee account')
           ? error.message
@@ -530,7 +536,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setAuthState('verification_required');
           return { status: 'verification_required' };
         }
-        return await reconcileSession(data.session);
+        return await reconcileSession(data.session, 'email');
       } catch (error) {
         const message = error instanceof Error && error.message.includes('Chawgee account')
           ? error.message

@@ -7,38 +7,61 @@ export type ProviderEligibility =
   | { status: 'verification_required'; provider: 'email' }
   | { status: 'unsupported_identity' };
 
+const supportedProviders = new Set<AuthProvider>(['email', 'google']);
+
 /**
  * Accept only Auth-owned evidence from the existing Supabase session pipeline.
- * app_metadata.provider is the FIRST signup provider, not the current method.
- * Until linking has its own policy, require one identity and matching metadata.
+ * app_metadata.provider selects the stable default, not the current method.
+ * Linked identities require matching Auth-owned provider-set corroboration.
  * This is frontend admission, not token verification or account ownership.
  */
-export function evaluateProviderIdentity(user: User): ProviderEligibility {
+export function evaluateProviderIdentity(user: User, expectedProvider?: AuthProvider): ProviderEligibility {
   const identities = user.identities;
   if (user.is_anonymous === true || typeof user.id !== 'string' || !user.id ||
-      !Array.isArray(identities) || identities.length !== 1) {
+      !Array.isArray(identities) || identities.length === 0) {
     return { status: 'unsupported_identity' };
   }
 
-  const identity = identities[0];
-  const provider = identity?.provider;
+  const providers = new Set<AuthProvider>();
+  for (const identity of identities) {
+    const provider = identity?.provider;
+    if (!identity || identity.user_id !== user.id || !supportedProviders.has(provider as AuthProvider) ||
+        providers.has(provider as AuthProvider)) {
+      return { status: 'unsupported_identity' };
+    }
+    providers.add(provider as AuthProvider);
+  }
+
   const metadata = user.app_metadata;
-  if (!identity || identity.user_id !== user.id ||
-      (provider !== 'email' && provider !== 'google') || metadata?.provider !== provider) {
-    return { status: 'unsupported_identity' };
-  }
-  // providers is optional in the SDK. When present, it must corroborate the
-  // sole identity; malformed, conflicting and linked-provider lists fail closed.
-  if (metadata.providers !== undefined &&
-      (!Array.isArray(metadata.providers) || metadata.providers.length !== 1 ||
-       metadata.providers[0] !== provider)) {
+  const metadataProvider = metadata?.provider;
+  if (!supportedProviders.has(metadataProvider as AuthProvider) ||
+      !providers.has(metadataProvider as AuthProvider)) {
     return { status: 'unsupported_identity' };
   }
 
+  const metadataProviders = metadata.providers;
+  if (metadataProviders === undefined) {
+    if (providers.size !== 1) return { status: 'unsupported_identity' };
+  } else if (!Array.isArray(metadataProviders) || metadataProviders.length === 0) {
+    return { status: 'unsupported_identity' };
+  } else {
+    const metadataProviderSet = new Set<AuthProvider>();
+    for (const provider of metadataProviders) {
+      if (!supportedProviders.has(provider as AuthProvider) || metadataProviderSet.has(provider as AuthProvider)) {
+        return { status: 'unsupported_identity' };
+      }
+      metadataProviderSet.add(provider as AuthProvider);
+    }
+    if (metadataProviderSet.size !== providers.size ||
+        [...metadataProviderSet].some((provider) => !providers.has(provider))) {
+      return { status: 'unsupported_identity' };
+    }
+  }
+
+  const provider = expectedProvider ?? metadataProvider as AuthProvider;
+  if (!providers.has(provider)) return { status: 'unsupported_identity' };
   if (provider === 'email' && !Boolean(user.email_confirmed_at)) {
     return { status: 'verification_required', provider };
   }
-  // Google evidence is its Supabase-owned identity, not an email address or
-  // editable user_metadata.email_verified. Confirm this payload contract in #7A-9F.
   return { status: 'eligible', provider };
 }
