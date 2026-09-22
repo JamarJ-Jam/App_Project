@@ -77,6 +77,7 @@ function renderLogin(overrides = {}) {
       if (name === 'react') return { createElement: (type, props, ...children) => ({ type, props, children }), useRef, useState };
       if (name === 'react-native') return {
         Alert: { alert: (...args) => { alertCalls.push(args); } },
+        Image: 'Image',
         KeyboardAvoidingView: 'KeyboardAvoidingView',
         Platform: { OS: 'ios' },
         SafeAreaView: 'SafeAreaView',
@@ -90,9 +91,10 @@ function renderLogin(overrides = {}) {
       if (name === 'expo-router') return { useRouter: () => routerMock, useLocalSearchParams: () => (overrides.params ?? {}) };
       if (name === 'expo-haptics') return hapticsMock;
       if (name === '@expo/vector-icons') return { Ionicons: 'Ionicons' };
-      if (name.endsWith('/ThemeContext')) return { useTheme: () => ({ theme: {} }) };
+      if (name.endsWith('/ThemeContext')) return { useTheme: () => ({ theme: overrides.theme ?? {} }) };
       if (name.endsWith('/colors')) return { LightTheme: {} };
       if (name.endsWith('/AuthContext')) return { useAuth: () => authMock };
+      if (name.endsWith('GoogleG_FullColor_RGB.png')) return 'GoogleG_FullColor_RGB.png';
       throw new Error(`Unexpected screen dependency: ${name}`);
     },
   });
@@ -211,15 +213,36 @@ test('requesting an email never touches authState (invariant guarded by fixed mo
   assert.equal(view.authMock.authState, 'unauthenticated');
 });
 
+test('Login renders the canonical standalone Google G with the required accessible action label', () => {
+  const view = renderLogin();
+  const button = find(view.tree, (node) => isTouchable(node) && /Sign in with Google/.test(textOf(node)));
+  const image = find(button, (node) => node.type === 'Image');
+  assert.equal(button.props.accessibilityRole, 'button');
+  assert.equal(button.props.accessibilityLabel, 'Sign in with Google');
+  assert.equal(image.props.source, 'GoogleG_FullColor_RGB.png');
+  assert.equal(image.props.resizeMode, 'contain');
+  assert.equal(JSON.stringify(image.props.style), JSON.stringify({ position: 'absolute', width: 64, height: 64, left: -22, top: -20 }));
+  assert.equal(button.props.style[0].height, 48);
+  assert.equal(button.props.style[0].minHeight, 48);
+  assert.doesNotMatch(textOf(button), /Continue with Google|\bG\b/);
+});
+
+test('Login keeps the canonical Google G unchanged in dark mode', () => {
+  const view = renderLogin({ theme: { isDark: true } });
+  const button = find(view.tree, (node) => isTouchable(node) && /Sign in with Google/.test(textOf(node)));
+  assert.equal(find(button, (node) => node.type === 'Image').props.source, 'GoogleG_FullColor_RGB.png');
+});
+
 test('Login Google action prevents double tap while browser flow is pending', async () => {
   let calls = 0;
   let resolveGoogle;
   const pending = new Promise((resolve) => { resolveGoogle = resolve; });
   const view = renderLogin({ auth: { signInWithGoogle: async () => { calls += 1; return pending; } } });
-  const google = find(view.tree, (node) => isTouchable(node) && /Continue with Google/.test(textOf(node)));
+  const google = find(view.tree, (node) => isTouchable(node) && /Sign in with Google/.test(textOf(node)));
 
   const first = google.props.onPress();
-  find(view.tree, (node) => isTouchable(node) && /Continue with Google/.test(textOf(node))).props.onPress();
+  find(view.tree, (node) => isTouchable(node) && /Sign in with Google/.test(textOf(node))).props.onPress();
+  assert.equal(find(view.tree, (node) => isTouchable(node) && /Sign in with Google/.test(textOf(node))).props.disabled, true);
   resolveGoogle({ status: 'failed', reason: 'verification_failed' });
   await first;
 
@@ -230,7 +253,7 @@ test('Login Google action prevents double tap while browser flow is pending', as
 
 test('Login Google stale result is silent and raw provider errors are not exposed', async () => {
   const view = renderLogin({ auth: { signInWithGoogle: async () => ({ status: 'failed', reason: 'stale_operation' }) } });
-  find(view.tree, (node) => isTouchable(node) && /Continue with Google/.test(textOf(node))).props.onPress();
+  find(view.tree, (node) => isTouchable(node) && /Sign in with Google/.test(textOf(node))).props.onPress();
   await Promise.resolve();
   assert.equal(view.alertCalls.length, 0);
 });

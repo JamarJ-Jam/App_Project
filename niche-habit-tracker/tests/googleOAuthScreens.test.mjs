@@ -50,6 +50,7 @@ function renderSignup(overrides = {}) {
       if (name === 'react') return { createElement: (type, props, ...children) => ({ type, props, children }), useState, useRef };
       if (name === 'react-native') return {
         Alert: { alert: (...args) => alerts.push(args) },
+        Image: 'Image',
         KeyboardAvoidingView: 'KeyboardAvoidingView', Platform: { OS: 'ios' }, SafeAreaView: 'SafeAreaView',
         ScrollView: 'ScrollView', StyleSheet: { create: (value) => value }, Text: 'Text', TextInput: 'TextInput',
         TouchableOpacity: 'TouchableOpacity', View: 'View',
@@ -60,9 +61,10 @@ function renderSignup(overrides = {}) {
         ImpactFeedbackStyle: { Medium: 'medium' }, NotificationFeedbackType: { Success: 'success' },
       };
       if (name === '@expo/vector-icons') return { Ionicons: 'Ionicons' };
-      if (name.endsWith('/ThemeContext')) return { useTheme: () => ({ theme: {} }) };
+      if (name.endsWith('/ThemeContext')) return { useTheme: () => ({ theme: overrides.theme ?? {} }) };
       if (name.endsWith('/colors')) return { LightTheme: {} };
       if (name.endsWith('/AuthContext')) return { useAuth: () => auth };
+      if (name.endsWith('GoogleG_FullColor_RGB.png')) return 'GoogleG_FullColor_RGB.png';
       throw new Error(`Unexpected screen dependency: ${name}`);
     },
   });
@@ -73,8 +75,27 @@ function renderSignup(overrides = {}) {
 }
 
 function googleButton(view) {
-  return find(view.tree, (node) => isTouchable(node) && /Sign Up with Google/.test(textOf(node)));
+  return find(view.tree, (node) => isTouchable(node) && /Sign up with Google/.test(textOf(node)));
 }
+
+test('Signup renders the canonical standalone Google G with the required accessible action label', () => {
+  const view = renderSignup();
+  const button = googleButton(view);
+  const image = find(button, (node) => node.props?.source !== undefined);
+  assert.equal(button.props.accessibilityRole, 'button');
+  assert.equal(button.props.accessibilityLabel, 'Sign up with Google');
+  assert.equal(image.props.source, 'GoogleG_FullColor_RGB.png');
+  assert.equal(image.props.resizeMode, 'contain');
+  assert.equal(JSON.stringify(image.props.style), JSON.stringify({ position: 'absolute', width: 64, height: 64, left: -22, top: -20 }));
+  assert.equal(button.props.style[0].height, 48);
+  assert.equal(button.props.style[0].minHeight, 48);
+  assert.doesNotMatch(textOf(button), /\bG\b/);
+});
+
+test('Signup keeps the canonical Google G unchanged in dark mode', () => {
+  const view = renderSignup({ theme: { isDark: true } });
+  assert.equal(find(googleButton(view), (node) => node.props?.source !== undefined).props.source, 'GoogleG_FullColor_RGB.png');
+});
 
 test('Signup Google action uses the shared AuthContext action once and disables while pending', async () => {
   let calls = 0;
@@ -85,6 +106,7 @@ test('Signup Google action uses the shared AuthContext action once and disables 
   const firstPress = first.props.onPress();
   googleButton(view).props.onPress();
   assert.equal(googleButton(view).props.disabled, true);
+  assert.equal(find(googleButton(view), (node) => node.props?.source !== undefined).props.source, 'GoogleG_FullColor_RGB.png');
   resolve({ status: 'authenticated' });
   await firstPress;
   assert.equal(calls, 1);

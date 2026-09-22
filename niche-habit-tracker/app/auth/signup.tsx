@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import {
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
@@ -126,9 +127,27 @@ export default function SignUpScreen() {
               <View style={[styles.divider, { backgroundColor: theme.border }]} />
             </View>
 
-            <TouchableOpacity style={[styles.socialBtn, { borderColor: theme.border, backgroundColor: theme.inputBackground }]} onPress={handleGoogleSignUp} disabled={googleSubmitting} accessibilityState={{ disabled: googleSubmitting, busy: googleSubmitting }}>
-              <Ionicons name="logo-google" size={18} color="#EA4335" />
-              <Text style={[styles.socialBtnText, { color: theme.textPrimary }]}>Sign Up with Google</Text>
+            <TouchableOpacity
+              style={[styles.socialBtn, {
+                borderColor: theme.isDark ? '#8A919E' : '#747775',
+                backgroundColor: theme.isDark ? '#303134' : '#FFFFFF',
+                opacity: googleSubmitting ? 0.55 : 1,
+              }]}
+              onPress={handleGoogleSignUp}
+              disabled={googleSubmitting}
+              accessibilityRole="button"
+              accessibilityLabel="Sign up with Google"
+              accessibilityState={{ disabled: googleSubmitting, busy: googleSubmitting }}
+            >
+              <View style={styles.googleIconSlot}>
+                <Image
+                  source={require('../../assets/auth/google/GoogleG_FullColor_RGB.png')}
+                  style={styles.googleIcon}
+                  resizeMode="contain"
+                  accessible={false}
+                />
+              </View>
+              <Text style={[styles.socialBtnText, { color: theme.textPrimary }]}>Sign up with Google</Text>
             </TouchableOpacity>
           </View>
 
@@ -164,7 +183,9 @@ const styles = StyleSheet.create({
   dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 2 },
   divider: { flex: 1, height: 1 },
   dividerText: { fontSize: 10, fontWeight: '800' },
-  socialBtn: { flexDirection: 'row', minHeight: 48, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },
+  socialBtn: { flexDirection: 'row', height: 48, minHeight: 48, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },
+  googleIconSlot: { width: 20, height: 24, position: 'relative', overflow: 'visible' },
+  googleIcon: { position: 'absolute', width: 64, height: 64, left: -22, top: -20 },
   socialBtnText: { fontWeight: '800', fontSize: 14 },
   footer: { flexDirection: 'row', justifyContent: 'center', marginTop: 20 },
   loginLink: { fontWeight: '900' },
