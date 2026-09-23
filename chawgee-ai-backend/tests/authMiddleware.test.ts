@@ -50,7 +50,7 @@ const run = async (
   body?: unknown,
 ) => {
   const req = request(authorization as string, body);
-  req.headers.authorization = authorization;
+  (req.headers as unknown as Record<string, string | string[] | undefined>).authorization = authorization;
   const { res, calls } = response();
   let nextCalls = 0;
   const next: NextFunction = () => { nextCalls += 1; };
@@ -87,11 +87,13 @@ test('missing or malformed authorization returns generic 401 and skips next', as
 });
 
 test('authentication failure returns 401 without exposing details', async () => {
+  let resolvedCalls = 0;
   const result = await run(
     'Bearer invalid-token',
     async () => { throw new AuthenticationError(); },
-    async () => resolved(),
+    async () => { resolvedCalls += 1; return resolved(); },
   );
+  assert.equal(resolvedCalls, 0);
   assert.equal(result.nextCalls, 0);
   assert.deepEqual(result.calls, [{ status: 401, body: { success: false, error: 'Unauthorized' } }]);
 });

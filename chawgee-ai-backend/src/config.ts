@@ -53,11 +53,15 @@ export const getAuthConfig = (env: NodeJS.ProcessEnv = process.env): AuthConfig 
   if (allowedAlgorithms.length !== 1 || allowedAlgorithms[0] !== 'ES256') {
     throw new ConfigurationError('Invalid backend configuration: SUPABASE_AUTH_ALLOWED_ALGORITHMS must be ES256.');
   }
+  const audience = required(env, 'SUPABASE_AUTH_AUDIENCE');
+  if (audience !== 'authenticated') {
+    throw new ConfigurationError('Invalid backend configuration: SUPABASE_AUTH_AUDIENCE must be authenticated.');
+  }
 
   return Object.freeze({
     issuer: requiredHttpsUrl(env, 'SUPABASE_AUTH_ISSUER'),
     jwksUrl: requiredHttpsUrl(env, 'SUPABASE_AUTH_JWKS_URL'),
-    audience: required(env, 'SUPABASE_AUTH_AUDIENCE'),
+    audience,
     allowedAlgorithms: ['ES256'] as const,
   });
 };

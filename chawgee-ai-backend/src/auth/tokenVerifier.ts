@@ -26,12 +26,18 @@ export const parseBearerToken = (authorization: string | string[] | undefined): 
   return match[1];
 };
 
+const canonicalUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 const toVerifiedIdentity = (payload: JWTPayload, config: AuthConfig): VerifiedIdentity => {
   if (
     typeof payload.iss !== 'string' ||
     payload.iss !== config.issuer ||
     typeof payload.sub !== 'string' ||
-    payload.sub.trim() === ''
+    !canonicalUuid.test(payload.sub) ||
+    typeof payload.exp !== 'number' ||
+    !Number.isFinite(payload.exp) ||
+    payload.role !== 'authenticated' ||
+    payload.is_anonymous !== false
   ) {
     throw new AuthenticationError();
   }
