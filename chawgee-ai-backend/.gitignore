@@ -1,4 +1,16 @@
 .env
+.env.*
+!.env.example
+!.env.*.example
 node_modules/
 *.log
 .DS_Store
+
+# Local private keys and certificate material
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.jks
+*.crt

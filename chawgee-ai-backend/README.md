@@ -59,3 +59,21 @@ A ten-second deadline forces exit on a stuck shutdown. Shutdown is idempotent.
 See `migrations/README.md` for release migrations and `src/repositories/README.md`
 for transaction usage. Live connectivity, SQL execution, hosted TLS, and role
 permissions remain unverified until infrastructure is provisioned.
+
+## Isolated PostgreSQL integration tests
+
+`npm run test:integration:db` is intentionally separate from `npm run test:unit`.
+It targets only the disposable Integration Tests Supabase project and never reads
+`DATABASE_URL` or `DATABASE_MIGRATION_URL`.
+
+Keep these values in ignored `.env.integration.local`; do not add them to tracked
+files, fixtures, logs, or CI output:
+
+- `CHAWGEE_IT_ADMIN_DATABASE_URL`: migration, grants, and reset only.
+- `CHAWGEE_IT_RUNTIME_DATABASE_URL`: passed to the runtime test process only.
+- `CHAWGEE_IT_SSL_CA_FILE`: path to the locally stored Supabase CA certificate.
+
+The harness requires verified TLS, checks the hard-pinned disposable target before
+destructive actions, holds an advisory lock, applies the versioned migration, and
+truncates only `chawgee.auth_bindings` and `chawgee.accounts`. `npm run
+db:integration:reset` performs the same guarded reset without executing tests.
