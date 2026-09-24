@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { X509Certificate } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import type { Pool } from 'pg';
 import { ConfigurationError, getDatabaseConfig } from '../src/config.js';
@@ -203,4 +205,23 @@ test('temporary readiness diagnostic permits exact safe timeout messages and is 
   ]);
   log.mock.mockImplementation(() => { throw new Error('logger failed'); });
   assert.equal(await db.ready(), false);
+});
+
+
+test('bundled Supabase CA loads from the deployment-relative path with verified TLS', () => {
+  // Unit commands run from the backend package root, matching npm start.
+  const caFile = 'certs/supabase-root-2021-ca.crt';
+  const pem = readFileSync(new URL('../certs/supabase-root-2021-ca.crt', import.meta.url), 'utf8');
+  assert.match(pem, /^\s*-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----\s*$/);
+  const certificate = new X509Certificate(pem);
+  assert.equal(certificate.ca, true);
+  assert.match(certificate.subject, /CN=Supabase Root 2021 CA/);
+  assert.equal(new Date(certificate.validTo).toISOString(), '2031-04-26T10:56:53.000Z');
+  assert.equal(certificate.fingerprint256,
+    '80:70:25:AD:50:D4:ED:21:9D:2C:9C:7D:29:9C:00:4F:82:4E:B0:0C:F7:F6:5A:FE:F6:07:D0:7B:72:E6:CA:FA');
+  const options = getDatabaseConfig('runtime', { ...env, DATABASE_SSL_CA_FILE: caFile });
+  assert.deepEqual(options.ssl, { rejectUnauthorized: true, ca: pem });
+  assert.throws(() => getDatabaseConfig('runtime', {
+    ...env, DATABASE_SSL_CA_FILE: caFile, DATABASE_SSL_MODE: 'disable',
+  }), ConfigurationError);
 });

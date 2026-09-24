@@ -77,3 +77,47 @@ The harness requires verified TLS, checks the hard-pinned disposable target befo
 destructive actions, holds an advisory lock, applies the versioned migration, and
 truncates only `chawgee.auth_bindings` and `chawgee.accounts`. `npm run
 db:integration:reset` performs the same guarded reset without executing tests.
+
+
+## Production Supabase database CA (Railway)
+
+The public trust anchor `certs/supabase-root-2021-ca.crt` is required for the
+confirmed production Supabase database chain. It contains one public certificate,
+not a private key or a database credential.
+
+- Subject CN: `Supabase Root 2021 CA`.
+- Expires: **2031-04-26 10:56:53 UTC**.
+- SHA-256 fingerprint:
+  `80:70:25:AD:50:D4:ED:21:9D:2C:9C:7D:29:9C:00:4F:82:4E:B0:0C:F7:F6:5A:FE:F6:07:D0:7B:72:E6:CA:FA`.
+
+For the Railway service with source root `/chawgee-ai-backend`, set:
+
+```text
+DATABASE_SSL_CA_FILE=certs/supabase-root-2021-ca.crt
+```
+
+The existing configuration reads this relative to the process working directory.
+Run `npm start` from the backend package root, as in the standard Railpack Node
+layout; `node dist/index.js` does not change that working directory. The Railway
+source-root setting is not an absolute runtime filesystem path. Do not use the
+local home-directory CA path in Railway.
+
+The certificate lives inside the service source root, with an exact `.gitignore`
+exception; all other certificate/private-key exclusions remain in place. There
+is no npm `files` restriction or `.npmignore`. The standard Railpack Node app
+image includes the application files; the npm build only replaces `dist`, leaving
+`certs` intact. No certificate-copy build step is needed. Any future custom image
+or artifact-only deployment must explicitly retain `certs` alongside `dist`.
+
+Keep `DATABASE_SSL_MODE=verify-full` (or leave it unset for that default).
+`rejectUnauthorized: true` remains unchanged. Never use TLS bypasses to address
+CA failures. Review a replacement CA against Supabase's confirmed certificate
+identity before rotation or expiry; update this fingerprint and the test together.
+
+Keep `[TEMPORARY_READINESS_DIAGNOSTIC]` for **one more Railway deployment**.
+After deploying these files and setting the variable, verify `/ready` returns 200
+and the TLS failure is absent before removing that temporary diagnostic in a
+separate change. Local tests do not prove the deployed Railway connection.
+
+Deployment references: [Railway service roots](https://docs.railway.com/deployments/monorepo)
+and [Railpack Node](https://railpack.com/languages/node/).
