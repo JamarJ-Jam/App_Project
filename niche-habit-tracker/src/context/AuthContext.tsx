@@ -60,6 +60,7 @@ interface AuthContextType {
   updateAccountIdentity: (email: string, name?: string) => Promise<void>;
   requestPasswordRecovery: (email: string) => Promise<PasswordRecoveryRequestResult>;
   completePasswordRecovery: (newPassword: string) => Promise<PasswordRecoveryCompletionResult>;
+  getAuthenticatedAccessToken: () => Promise<string>;
   signOut: () => Promise<void>;
 }
 
@@ -77,6 +78,7 @@ const AuthContext = createContext<AuthContextType>({
   updateAccountIdentity: async () => {},
   requestPasswordRecovery: async () => ({ status: 'failed', reason: 'request_failed' }),
   completePasswordRecovery: async () => ({ status: 'failed', reason: 'not_authorized' }),
+  getAuthenticatedAccessToken: async () => { throw new Error('Authentication is required.'); },
   signOut: async () => {},
 });
 
@@ -122,6 +124,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     sdkMutation.current = true;
     try { return await work(); } finally { sdkMutation.current = false; }
   }, []);
+
+  const getAuthenticatedAccessToken = useCallback(async (): Promise<string> => {
+    if (authState !== 'authenticated') throw new Error('Authentication is required.');
+    const client = await getSupabaseClient();
+    const { data, error } = await client.auth.getSession();
+    if (error || !data.session?.access_token) throw new Error('Authentication is required.');
+    return data.session.access_token;
+  }, [authState]);
 
   const clearAuthenticatedState = () => {
     setUser(null);
@@ -824,6 +834,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updateAccountIdentity,
       requestPasswordRecovery,
       completePasswordRecovery,
+      getAuthenticatedAccessToken,
       signOut,
     }}>
       {children}

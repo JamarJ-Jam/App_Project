@@ -22,6 +22,7 @@ const adjustNutritionPlanSchema = z.object({
 });
 
 // 2. Exported Tools
+// These only return proposals; persistent tools must enforce account-scoped authorization at execution.
 export const agentTools = {
   addCalendarEvent: tool({
     description: 'Add a scheduled event, deep work block, or workout to the user calendar.',

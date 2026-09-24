@@ -8,7 +8,18 @@ const accountScreenSource = readFileSync(new URL('../app/(tabs)/account.tsx', im
 test('AuthContext exposes a requestPasswordRecovery action on the context type and default value', () => {
   assert.match(authContextSource, /requestPasswordRecovery: \(email: string\) => Promise<PasswordRecoveryRequestResult>;/);
   assert.match(authContextSource, /requestPasswordRecovery: async \(\) => \(\{ status: 'failed', reason: 'request_failed' \}\),/);
-  assert.match(authContextSource, /\n\s*requestPasswordRecovery,\n\s*completePasswordRecovery,\n\s*signOut,\n\s*\}\}>/);
+  assert.match(authContextSource, /\n\s*requestPasswordRecovery,\n\s*completePasswordRecovery,\n\s*getAuthenticatedAccessToken,\n\s*signOut,\n\s*\}\}>/);
+});
+
+test('getAuthenticatedAccessToken reads only the active singleton session', () => {
+  const match = authContextSource.match(/const getAuthenticatedAccessToken = useCallback\(async \(\): Promise<string> => \{[\s\S]*?\n  \}, \[authState\]\);/);
+  assert.ok(match, 'getAuthenticatedAccessToken implementation not found in AuthContext.tsx');
+  const body = match[0];
+
+  assert.ok(body.includes("authState !== 'authenticated'"));
+  assert.ok(body.includes('getSupabaseClient'));
+  assert.ok(body.includes('client.auth.getSession()'));
+  assert.ok(!body.includes('AsyncStorage'));
 });
 
 test('requestPasswordRecovery wiring never bootstraps, mutates auth state, or touches the callback/lifecycle machinery', () => {

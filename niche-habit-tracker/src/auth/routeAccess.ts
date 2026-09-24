@@ -48,7 +48,9 @@ export const resolveRouteAccess = (
   }
 
   if (authState === 'unauthenticated') {
-    return routeKind === 'protected' ? { type: 'redirect', href: '/(tabs)' } : { type: 'allow' };
+    return routeKind === 'protected' ? { type: 'redirect', href: '/(tabs)' }
+      : routeKind === 'onboarding' ? { type: 'redirect', href: '/auth/login' }
+        : { type: 'allow' };
   }
 
   if (authState === 'verification_required' || authState === 'bootstrap_failed') {
@@ -56,7 +58,9 @@ export const resolveRouteAccess = (
   }
 
   if (authState === 'guest') {
-    return routeKind === 'public' ? { type: 'redirect', href: '/(tabs)/dashboard' } : { type: 'allow' };
+    return routeKind === 'public' || routeKind === 'onboarding'
+      ? { type: 'redirect', href: '/(tabs)/dashboard' }
+      : { type: 'allow' };
   }
 
   return routeKind === 'public'

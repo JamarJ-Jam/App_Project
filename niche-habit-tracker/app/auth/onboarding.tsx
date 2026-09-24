@@ -18,10 +18,11 @@ import * as Calendar from 'expo-calendar/legacy';
 import { Ionicons } from '@expo/vector-icons';
 
 import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
+import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
 import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
 import { saveOnboardingProfile } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/userProfileStorage';
-
-import { appConfig } from '../../src/config';
+import { submitChawgeeOnboarding } from '../../src/services/chawgeeApi';
+import { ownsOnboardingRequest } from '../../src/services/onboardingRequestOwnership';
 
 type HeightUnit = 'cm' | 'ft';
 type WeightUnit = 'kg' | 'lbs';
@@ -152,10 +153,12 @@ const countCompletedFields = (profile: OnboardingProfileDraft) => {
 
 export default function OnboardingScreen() {
   const { theme = LightTheme } = useTheme() || {};
+  const { getAuthenticatedAccessToken } = useAuth();
   const router = useRouter();
   const scrollRef = useRef<ScrollView>(null);
   const inputRef = useRef<TextInput>(null);
   const keepKeyboardOpenRef = useRef(false);
+  const onboardingController = useRef<AbortController | null>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     { id: 'welcome', role: 'assistant', text: FIRST_MESSAGE },
@@ -194,6 +197,11 @@ export default function OnboardingScreen() {
       showSubscription.remove();
       frameSubscription.remove();
     };
+  }, []);
+
+  useEffect(() => () => {
+    onboardingController.current?.abort();
+    onboardingController.current = null;
   }, []);
 
   const hasRequiredProfileFields = (
@@ -292,6 +300,11 @@ export default function OnboardingScreen() {
 
     keepKeyboardOpenRef.current = keepKeyboardOpen;
 
+    const controller = new AbortController();
+    onboardingController.current?.abort();
+    onboardingController.current = controller;
+    const ownsRequest = () => ownsOnboardingRequest(onboardingController.current, controller);
+
     if (keepKeyboardOpen) {
       requestAnimationFrame(() => inputRef.current?.focus());
     }
@@ -306,26 +319,22 @@ export default function OnboardingScreen() {
           ? profile
           : { ...profile, calendarSyncEnabled: resolvedCalendarSync };
 
-      const response = await fetch(`${appConfig.apiBaseUrl}/api/chawgee/onboarding`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      if (!ownsRequest()) return;
+
+      const accessToken = await getAuthenticatedAccessToken();
+      if (!ownsRequest()) return;
+
+      const data = await submitChawgeeOnboarding(accessToken, {
           message: trimmed,
           expectedField: currentField,
-          profile: profileForRequest,
+          profile: profileForRequest as Record<string, unknown>,
           recentMessages: conversationContext,
-        }),
-      });
+        }, controller.signal) as OnboardingResponse;
+      if (!ownsRequest()) return;
 
-      if (!response.ok) {
-        const body = await response.text();
-        throw new Error(`Onboarding request failed (${response.status}): ${body}`);
-      }
-
-      const data = (await response.json()) as OnboardingResponse;
       const updatedProfile = {
         ...profileForRequest,
-        ...(data.profileUpdates ?? {}),
+        ...((data.profileUpdates as Partial<OnboardingProfileDraft>) ?? {}),
         ...(resolvedCalendarSync !== undefined
           ? { calendarSyncEnabled: resolvedCalendarSync }
           : {}),
@@ -364,6 +373,8 @@ export default function OnboardingScreen() {
         setIsComplete(false);
       }
     } catch (error) {
+      if (!ownsRequest()) return;
+
       console.error('Chawgee onboarding error:', error);
       setMessages((prev) => [
         ...prev,
@@ -374,6 +385,9 @@ export default function OnboardingScreen() {
         },
       ]);
     } finally {
+      if (!ownsRequest()) return;
+
+      onboardingController.current = null;
       setIsLoading(false);
 
       if (keepKeyboardOpenRef.current) {

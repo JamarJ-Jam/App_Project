@@ -11,6 +11,23 @@ export interface BootstrapResponse {
 }
 
 export const BOOTSTRAP_REQUEST_TIMEOUT_MS = 30_000;
+export const AI_REQUEST_TIMEOUT_MS = 45_000;
+
+export class ChawgeeAiAccessError extends Error {
+  constructor(readonly status: 401 | 403) {
+    super(status === 401
+      ? 'Your authentication session is no longer valid.'
+      : 'Your Chawgee account is currently restricted.');
+    this.name = 'ChawgeeAiAccessError';
+  }
+}
+
+export class ChawgeeAiTransientError extends Error {
+  constructor() {
+    super('Unable to connect to Chawgee AI backend.');
+    this.name = 'ChawgeeAiTransientError';
+  }
+}
 
 export const bootstrapChawgeeAccount = async (
   accessToken: string,
@@ -60,7 +77,7 @@ export const bootstrapChawgeeAccount = async (
 };
 
 export interface BriefingRequestPayload {
-  userContext?: any;
+  userContext?: unknown;
   userQuery?: string;
 }
 
@@ -71,40 +88,94 @@ export interface BriefingResponse {
   error?: string;
 }
 
+export interface OnboardingRequestPayload {
+  message: string;
+  expectedField: string;
+  profile: Record<string, unknown>;
+  recentMessages: { role: 'assistant' | 'user'; text: string }[];
+}
+
+export interface OnboardingResponse {
+  assistantMessage: string;
+  profileUpdates?: Record<string, unknown>;
+  nextField: string;
+  quickReplies?: string[];
+  isComplete: boolean;
+}
+
+const authenticatedAiRequest = async (
+  path: '/api/chawgee/onboarding' | '/api/chawgee/briefing',
+  accessToken: string,
+  payload: unknown,
+  externalSignal?: AbortSignal,
+): Promise<Response> => {
+  const controller = new AbortController();
+  const abortForExternalSignal = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener('abort', abortForExternalSignal, { once: true });
+  const timeout = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
+
+  try {
+    // Validate before creating a Bearer-bearing request.
+    assertChawgeeApiTransport(appConfig.apiBaseUrl);
+    if (controller.signal.aborted) throw new ChawgeeAiTransientError();
+    const response = await fetch(`${appConfig.apiBaseUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    if (controller.signal.aborted) throw new ChawgeeAiTransientError();
+    if (response.status === 401 || response.status === 403) {
+      throw new ChawgeeAiAccessError(response.status);
+    }
+    if (!response.ok) throw new ChawgeeAiTransientError();
+    return response;
+  } catch (error) {
+    if (error instanceof ChawgeeAiAccessError) throw error;
+    throw new ChawgeeAiTransientError();
+  } finally {
+    clearTimeout(timeout);
+    externalSignal?.removeEventListener('abort', abortForExternalSignal);
+  }
+};
+
+export const submitChawgeeOnboarding = async (
+  accessToken: string,
+  payload: OnboardingRequestPayload,
+  externalSignal?: AbortSignal,
+): Promise<OnboardingResponse> => {
+  const response = await authenticatedAiRequest(
+    '/api/chawgee/onboarding',
+    accessToken,
+    payload,
+    externalSignal,
+  );
+  return response.json() as Promise<OnboardingResponse>;
+};
+
 export const fetchChawgeeBriefing = async (
-  payload: BriefingRequestPayload = {}
+  accessToken: string,
+  payload: BriefingRequestPayload = {},
+  externalSignal?: AbortSignal,
 ): Promise<BriefingResponse> => {
   try {
-    const response = await fetch(
-      `${appConfig.apiBaseUrl}/api/chawgee/briefing`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      }
+    const response = await authenticatedAiRequest(
+      '/api/chawgee/briefing',
+      accessToken,
+      payload,
+      externalSignal,
     );
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data: BriefingResponse = await response.json();
-
-    return data;
-  } catch (err: any) {
-    console.error(
-      'Failed to fetch from Chawgee AI Backend:',
-      err
-    );
-
+    return response.json() as Promise<BriefingResponse>;
+  } catch (error) {
+    if (error instanceof ChawgeeAiAccessError) throw error;
     return {
       success: false,
       chawgeeInsight: '',
-      error:
-        err.message ||
-        'Network fetch failed',
+      error: 'Unable to connect to Chawgee AI backend.',
     };
   }
 };

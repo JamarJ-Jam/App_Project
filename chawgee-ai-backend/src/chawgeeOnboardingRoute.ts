@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import { generateText } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { config } from './config.js';
@@ -550,10 +550,13 @@ const nextMissingField = (
 };
 
 
-export const createOnboardingRouter = (generateTextForOnboarding: OnboardingTextGenerator = generateOnboardingText): Router => {
+export const createOnboardingRouter = (
+  generateTextForOnboarding: OnboardingTextGenerator = generateOnboardingText,
+  middleware: [RequestHandler, ...RequestHandler[]],
+): Router => {
   const router = Router();
 
-  router.post('/api/chawgee/onboarding', async (req, res) => {
+  router.post('/api/chawgee/onboarding', ...middleware, async (req, res) => {
   try {
     const message = String(req.body?.message ?? '').trim();
     const expectedField = req.body?.expectedField as OnboardingField;
@@ -781,6 +784,3 @@ User message: ${JSON.stringify(message)}
 
   return router;
 };
-
-const router = createOnboardingRouter();
-export default router;

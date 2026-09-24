@@ -14,9 +14,9 @@ test('callback route is allowed through every transitional auth state', () => {
   }
 });
 
-test('unauthenticated users can access public/onboarding but not protected routes', () => {
+test('unauthenticated users cannot access onboarding or protected routes', () => {
   assert.deepEqual(decision('unauthenticated', 'public'), { type: 'allow' });
-  assert.deepEqual(decision('unauthenticated', 'onboarding'), { type: 'allow' });
+  assert.deepEqual(decision('unauthenticated', 'onboarding'), { type: 'redirect', href: '/auth/login' });
   assert.deepEqual(decision('unauthenticated', 'protected'), { type: 'redirect', href: '/(tabs)' });
 });
 
@@ -34,9 +34,9 @@ test('authenticated users can access onboarding and protected routes, but not pu
   assert.deepEqual(decision('authenticated', 'public'), { type: 'redirect', href: '/(tabs)/dashboard' });
 });
 
-test('guest users retain local application access', () => {
+test('guest users cannot access AI onboarding', () => {
   assert.deepEqual(decision('guest', 'protected'), { type: 'allow' });
-  assert.deepEqual(decision('guest', 'onboarding'), { type: 'allow' });
+  assert.deepEqual(decision('guest', 'onboarding'), { type: 'redirect', href: '/(tabs)/dashboard' });
   assert.deepEqual(decision('guest', 'public'), { type: 'redirect', href: '/(tabs)/dashboard' });
 });
 

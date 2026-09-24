@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import { logOperationalFailure, sendInternalServerError } from './http.js';
 
 export interface BriefingGeneration {
@@ -8,10 +8,13 @@ export interface BriefingGeneration {
 
 export type BriefingGenerator = (prompt: string) => Promise<BriefingGeneration>;
 
-export const createBriefingRouter = (generateBriefing: BriefingGenerator): Router => {
+export const createBriefingRouter = (
+  generateBriefing: BriefingGenerator,
+  middleware: [RequestHandler, ...RequestHandler[]],
+): Router => {
   const router = Router();
 
-  router.post('/api/chawgee/briefing', async (req, res) => {
+  router.post('/api/chawgee/briefing', ...middleware, async (req, res) => {
     try {
       const { userContext, userQuery } = req.body;
 

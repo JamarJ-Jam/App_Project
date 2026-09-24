@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import express from 'express';
+import type { RequestHandler } from 'express';
 import { createBriefingRouter } from '../src/briefingRoute.js';
 import { createOnboardingRouter } from '../src/chawgeeOnboardingRoute.js';
 import {
@@ -48,6 +49,31 @@ const url = (server: Server, path: string): string => {
   assert.ok(address && typeof address !== 'string');
   return `http://127.0.0.1:${address.port}${path}`;
 };
+
+const testAiSecurityMiddleware: RequestHandler = (req, _res, next) => {
+  req.auth = {
+    identity: {
+      issuer: 'https://project.supabase.co/auth/v1',
+      subject: '11111111-1111-4111-8111-111111111111',
+      authProvider: 'supabase',
+    },
+    accountId: 'test-account',
+    accountStatus: 'active',
+  };
+  next();
+};
+
+test('AI router factories fail closed when security middleware is omitted', () => {
+  const generate = async () => ({ text: 'test' });
+  assert.throws(
+    () => (createBriefingRouter as unknown as (generator: typeof generate) => unknown)(generate),
+    TypeError,
+  );
+  assert.throws(
+    () => (createOnboardingRouter as unknown as (generator: typeof generate) => unknown)(generate),
+    TypeError,
+  );
+});
 
 test('production runtime configuration validates auth and verified database TLS before listen', () => {
   const runtime = getServerRuntimeConfig(productionEnv);
@@ -173,8 +199,8 @@ test('briefing and onboarding provider failures keep sensitive content out of re
   const failGeneration = async () => { throw new Error(sensitiveMarker); };
   const app = express();
   app.use(express.json({ limit: JSON_BODY_LIMIT }));
-  app.use(createBriefingRouter(failGeneration));
-  app.use(createOnboardingRouter(failGeneration));
+  app.use(createBriefingRouter(failGeneration, [testAiSecurityMiddleware]));
+  app.use(createOnboardingRouter(failGeneration, [testAiSecurityMiddleware]));
   const server = await start(app);
   const originalError = console.error;
   const logs: string[] = [];

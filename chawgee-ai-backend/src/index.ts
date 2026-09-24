@@ -6,14 +6,20 @@ import { config, getServerRuntimeConfig } from './config.js';
 import { CHAWGEE_SYSTEM_PROMPT } from './prompt.js';
 import { agentTools } from './tools.js';
 import { createBriefingRouter } from './briefingRoute.js';
-import chawgeeOnboardingRoute from './chawgeeOnboardingRoute.js';
+import { createOnboardingRouter } from './chawgeeOnboardingRoute.js';
 import { database } from './db/database.js';
 import { createBootstrapRouter } from './auth/bootstrapRoute.js';
 import {
+  createAuthenticationMiddleware,
   createIdentityResolutionMiddleware,
   createTokenAdmissionMiddleware,
 } from './auth/authMiddleware.js';
 import { createBootstrapSubjectLimiter } from './auth/bootstrapRateLimit.js';
+import {
+  BRIEFING_AI_RATE_LIMIT,
+  createAuthenticatedSubjectLimiter,
+  ONBOARDING_AI_RATE_LIMIT,
+} from './auth/aiRateLimit.js';
 import { createTokenVerifier } from './auth/tokenVerifier.js';
 import { createIdentityService } from './services/identityService.js';
 import {
@@ -44,6 +50,15 @@ const bootstrapSubjectLimiter = createBootstrapSubjectLimiter();
 const identityResolutionMiddleware = createIdentityResolutionMiddleware({
   resolveIdentity: identityService.resolveOrProvision,
 });
+const aiAuthenticationMiddleware = createAuthenticationMiddleware({
+  verifyAccessToken: async (token) => {
+    tokenVerifier ??= createTokenVerifier(runtimeConfig.auth);
+    return tokenVerifier.verify(token);
+  },
+  resolveIdentity: identityService.resolveOrProvision,
+});
+const onboardingAiLimiter = createAuthenticatedSubjectLimiter(ONBOARDING_AI_RATE_LIMIT);
+const briefingAiLimiter = createAuthenticatedSubjectLimiter(BRIEFING_AI_RATE_LIMIT);
 
 app.use(createBootstrapRouter(
   tokenAdmissionMiddleware,
@@ -51,7 +66,10 @@ app.use(createBootstrapRouter(
   identityResolutionMiddleware,
 ));
 
-app.use(chawgeeOnboardingRoute);
+app.use(createOnboardingRouter(undefined, [
+  aiAuthenticationMiddleware,
+  onboardingAiLimiter,
+]));
 
 app.use(createBriefingRouter(async (prompt) => {
   const response = await generateText({
@@ -61,7 +79,10 @@ app.use(createBriefingRouter(async (prompt) => {
     tools: agentTools,
   });
   return { text: response.text, toolResults: response.toolResults };
-}));
+}, [
+  aiAuthenticationMiddleware,
+  briefingAiLimiter,
+]));
 
 app.get('/health', healthHandler);
 

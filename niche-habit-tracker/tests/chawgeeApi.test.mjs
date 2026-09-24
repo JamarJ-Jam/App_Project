@@ -30,7 +30,7 @@ const response = (status, body) => ({
   json: async () => body,
 });
 
-const loadApi = ({ apiBaseUrl = 'https://api.example.test', assertTransport, fetchImpl, timers = [] }) => {
+const loadApi = ({ apiBaseUrl = 'https://api.example.test', assertTransport, fetchImpl, timers = [], clearedTimers = [] }) => {
   const exports = {};
   runInNewContext(apiOutput, {
     exports,
@@ -46,7 +46,7 @@ const loadApi = ({ apiBaseUrl = 'https://api.example.test', assertTransport, fet
     fetch: fetchImpl,
     AbortController,
     setTimeout(callback) { timers.push(callback); return callback; },
-    clearTimeout() {},
+    clearTimeout(timer) { clearedTimers.push(timer); },
   });
   return exports;
 };
@@ -206,4 +206,102 @@ test('bootstrap may retry after timeout and network failure', async () => {
   await assert.rejects(timedOut, /Unable to initialize/);
   await assert.rejects(api.bootstrapChawgeeAccount('access-token'), /Unable to initialize/);
   assert.deepEqual(await api.bootstrapChawgeeAccount('access-token'), account.account);
+});
+
+const onboardingPayload = {
+  message: 'Fitness',
+  expectedField: 'primaryGoal',
+  profile: {},
+  recentMessages: [],
+};
+
+test('authenticated onboarding and briefing send the supplied Bearer token', async () => {
+  const calls = [];
+  const api = loadApi({
+    fetchImpl: async (url, options) => {
+      calls.push([url, options]);
+      return url.endsWith('/onboarding')
+        ? response(200, { assistantMessage: 'Good choice.', nextField: 'units', isComplete: false })
+        : response(200, { success: true, chawgeeInsight: 'Briefing', toolResults: [] });
+    },
+  });
+  await api.submitChawgeeOnboarding('current-access-token', onboardingPayload);
+  assert.deepEqual(
+    await api.fetchChawgeeBriefing('current-access-token', { userContext: { private: true } }),
+    { success: true, chawgeeInsight: 'Briefing', toolResults: [] },
+  );
+  assert.equal(calls.length, 2);
+  for (const [, options] of calls) {
+    assert.equal(options.headers.Authorization, 'Bearer current-access-token');
+    assert.equal(options.headers['Content-Type'], 'application/json');
+  }
+});
+
+test('AI requests validate release transport before a Bearer fetch', async () => {
+  const config = loadConfig('https://api.example.test', false);
+  let fetchCalls = 0;
+  const api = loadApi({
+    apiBaseUrl: 'http://api.example.test',
+    assertTransport: (value) => config.validateChawgeeApiBaseUrl(value, false),
+    fetchImpl: async () => { fetchCalls += 1; return response(200, {}); },
+  });
+  await assert.rejects(api.submitChawgeeOnboarding('secret-token', onboardingPayload), /Unable to connect/);
+  assert.equal(fetchCalls, 0);
+});
+
+test('AI requests use exactly the forty-five second timeout and clean up cancellation resources', async () => {
+  const timers = [];
+  const clearedTimers = [];
+  const external = new AbortController();
+  let requestSignal;
+  const api = loadApi({
+    timers,
+    clearedTimers,
+    fetchImpl: async (_url, options) => new Promise((_resolve, reject) => {
+      requestSignal = options.signal;
+      options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    }),
+  });
+  const pending = api.submitChawgeeOnboarding('access-token', onboardingPayload, external.signal);
+  assert.equal(api.AI_REQUEST_TIMEOUT_MS, 45_000);
+  assert.equal(timers.length, 1);
+  external.abort();
+  await assert.rejects(pending, /Unable to connect/);
+  assert.equal(requestSignal.aborted, true);
+  assert.equal(clearedTimers.length, 1);
+});
+
+for (const [status, message] of [
+  [401, 'authentication session is no longer valid'],
+  [403, 'account is currently restricted'],
+]) {
+  test(`AI ${status} remains an authoritative failure`, async () => {
+    const api = loadApi({ fetchImpl: async () => response(status, {}) });
+    await assert.rejects(
+      api.submitChawgeeOnboarding('access-token', onboardingPayload),
+      new RegExp(message),
+    );
+  });
+}
+
+test('AI rate-limit and network failures remain retryable briefing failures', async () => {
+  let calls = 0;
+  const api = loadApi({
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) return response(429, {});
+      if (calls === 2) throw new Error('network unavailable');
+      return response(200, { success: true, chawgeeInsight: 'Recovered' });
+    },
+  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const transient = await api.fetchChawgeeBriefing('access-token', { userContext: {} });
+    assert.equal(transient.success, false);
+    assert.equal(transient.chawgeeInsight, '');
+    assert.equal(transient.error, 'Unable to connect to Chawgee AI backend.');
+  }
+  assert.deepEqual(
+    await api.fetchChawgeeBriefing('access-token', { userContext: {} }),
+    { success: true, chawgeeInsight: 'Recovered' },
+  );
 });

@@ -487,7 +487,7 @@ const getLifecycleLabel = (
 
 export default function DashboardScreen() {
   const { theme = LightTheme } = useTheme() || {};
-  const { user } = useAuth();
+  const { user, getAuthenticatedAccessToken } = useAuth();
   const router = useRouter();
 
   const ensureNotificationPermission = useCallback(async () => {
@@ -693,7 +693,7 @@ export default function DashboardScreen() {
     setCalendarVisible(false);
   };
 
-  const loadChawgeeBriefing = async () => {
+  const loadChawgeeBriefing = async (externalSignal?: AbortSignal) => {
     setLoadingAi(true);
 
     try {
@@ -806,9 +806,11 @@ export default function DashboardScreen() {
         }
       }
 
-      const result = await fetchChawgeeBriefing({
+      const accessToken = await getAuthenticatedAccessToken();
+      const result = await fetchChawgeeBriefing(accessToken, {
         userContext: briefingContext,
-      });
+      }, externalSignal);
+      if (externalSignal?.aborted) return;
 
       if (result.success && result.chawgeeInsight) {
         setAiBriefing(result.chawgeeInsight);
@@ -830,13 +832,14 @@ export default function DashboardScreen() {
         );
       }
     } catch (error) {
+      if (externalSignal?.aborted) return;
       console.error('Failed to build Chawgee context:', error);
 
       setAiBriefing(
         'Unable to load your Chawgee context. Please try again.'
       );
     } finally {
-      setLoadingAi(false);
+      if (!externalSignal?.aborted) setLoadingAi(false);
     }
   };
 
@@ -1120,8 +1123,10 @@ export default function DashboardScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      loadChawgeeBriefing();
+      const briefingController = new AbortController();
+      loadChawgeeBriefing(briefingController.signal);
       loadDashboardTimeline();
+      return () => briefingController.abort();
     }, [
       range.startDate,
       range.endDate,
