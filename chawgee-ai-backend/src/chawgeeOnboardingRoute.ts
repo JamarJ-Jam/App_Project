@@ -2,14 +2,24 @@ import { Router } from 'express';
 import { generateText } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { config } from './config.js';
-
-const router = Router();
+import { logOperationalFailure } from './http.js';
 
 const openrouter = createOpenRouter({
   apiKey: config.openRouterApiKey,
 });
 
 const MODEL = config.openRouterOnboardingModel;
+
+export type OnboardingTextGenerator = (prompt: string) => Promise<{ text: string }>;
+
+const generateOnboardingText: OnboardingTextGenerator = async (prompt) => {
+  const response = await generateText({
+    model: openrouter(MODEL),
+    prompt,
+    temperature: 0,
+  });
+  return { text: response.text };
+};
 
 type OnboardingField =
   | 'primaryGoal'
@@ -540,7 +550,10 @@ const nextMissingField = (
 };
 
 
-router.post('/api/chawgee/onboarding', async (req, res) => {
+export const createOnboardingRouter = (generateTextForOnboarding: OnboardingTextGenerator = generateOnboardingText): Router => {
+  const router = Router();
+
+  router.post('/api/chawgee/onboarding', async (req, res) => {
   try {
     const message = String(req.body?.message ?? '').trim();
     const expectedField = req.body?.expectedField as OnboardingField;
@@ -629,11 +642,7 @@ Recent conversation: ${JSON.stringify(recentMessages)}
 User message: ${JSON.stringify(message)}
 `.trim();
 
-    const extraction = await generateText({
-      model: openrouter(MODEL),
-      prompt: extractionPrompt,
-      temperature: 0,
-    });
+    const extraction = await generateTextForOnboarding(extractionPrompt);
 
     const interpretation = parseJsonObject(extraction.text);
     const assistantLead =
@@ -762,12 +771,16 @@ User message: ${JSON.stringify(message)}
       quickReplies: isComplete ? [] : quickRepliesFor(nextField, merged),
       isComplete,
     });
-  } catch (error) {
-    console.error('Chawgee onboarding route error:', error);
+  } catch {
+    logOperationalFailure('Chawgee onboarding request');
     return res.status(500).json({
       error: 'Unable to process onboarding response.',
     });
   }
-});
+  });
 
+  return router;
+};
+
+const router = createOnboardingRouter();
 export default router;

@@ -15,6 +15,15 @@ export interface AuthConfig {
   allowedAlgorithms: readonly ['ES256'];
 }
 
+export type ServerEnvironment = 'development' | 'test' | 'production';
+
+export interface ServerRuntimeConfig {
+  environment: ServerEnvironment;
+  port: number;
+  auth?: AuthConfig;
+  database?: PoolConfig;
+}
+
 const required = (env: NodeJS.ProcessEnv, name: string): string => {
   const value = env[name]?.trim();
   if (!value) throw new ConfigurationError(`Missing required backend configuration: ${name}.`);
@@ -28,6 +37,13 @@ const integer = (value: string | undefined, fallback: number, max: number, name:
     throw new ConfigurationError(`Invalid backend configuration: ${name} must be an integer from 1 to ${max}.`);
   }
   return result;
+};
+
+const serverEnvironment = (env: NodeJS.ProcessEnv): ServerEnvironment => {
+  const value = env.NODE_ENV?.trim();
+  if (!value) throw new ConfigurationError('Missing required backend configuration: NODE_ENV.');
+  if (value === 'development' || value === 'test' || value === 'production') return value;
+  throw new ConfigurationError('Invalid backend configuration: NODE_ENV must be development, test, or production.');
 };
 
 const requiredHttpsUrl = (env: NodeJS.ProcessEnv, name: string): string => {
@@ -117,4 +133,22 @@ export const getDatabaseConfig = (
     query_timeout: purpose === 'migration' ? 130000 : 20000,
     idle_in_transaction_session_timeout: 15000,
   };
+};
+
+export const getServerRuntimeConfig = (env: NodeJS.ProcessEnv = process.env): ServerRuntimeConfig => {
+  const environment = serverEnvironment(env);
+  const port = integer(env.PORT, 4000, 65535, 'PORT');
+  if (environment !== 'production') return Object.freeze({ environment, port });
+
+  const database = getDatabaseConfig('runtime', env);
+  if (database.ssl === false) {
+    throw new ConfigurationError('Invalid backend configuration: DATABASE_SSL_MODE=disable is not allowed in production.');
+  }
+
+  return Object.freeze({
+    environment,
+    port,
+    auth: getAuthConfig(env),
+    database,
+  });
 };
