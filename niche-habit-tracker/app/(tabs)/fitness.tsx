@@ -17,10 +17,10 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 
-import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
-import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
+import { useTheme } from '../../src/context/ThemeContext';
+import { LightTheme } from '../../src/constants/colors';
 import { loadUserProfile } from '../../src/storage/userProfileStorage';
-import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
+import { useAuth } from '../../src/context/AuthContext';
 
 export const STORAGE_KEY_WORKOUT_HISTORY = '@activity_workout_history';
 

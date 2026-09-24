@@ -15,9 +15,9 @@ import {
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
-import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
-import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
+import { useTheme } from '../../src/context/ThemeContext';
+import { LightTheme } from '../../src/constants/colors';
+import { useAuth } from '../../src/context/AuthContext';
 
 export default function SignUpScreen() {
   const { theme = LightTheme } = useTheme() || {};

@@ -18,8 +18,8 @@ import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
-import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
+import { useTheme } from '../../src/context/ThemeContext';
+import { LightTheme } from '../../src/constants/colors';
 import {
   loadMacroGoals,
   loadTodayMealLogs,
@@ -27,7 +27,7 @@ import {
   deleteMealLog,
   MealItem as StoredMealItem,
   MacroGoals,
-} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/nutritionStorage';
+} from '../../src/storage/nutritionStorage';
 
 type MealCategory = 'Breakfast' | 'Lunch' | 'Dinner' | 'Snacks';
 

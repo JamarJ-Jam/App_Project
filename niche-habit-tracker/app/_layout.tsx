@@ -1,8 +1,8 @@
 import '../src/storage/utils/notifications';
 import React from 'react';
 import { Stack } from 'expo-router';
-import { ThemeProvider } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
-import { AuthProvider } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
+import { ThemeProvider } from '../src/context/ThemeContext';
+import { AuthProvider } from '../src/context/AuthContext';
 import { AuthCallbackHandoffProvider } from '../src/context/AuthCallbackHandoffContext';
 import AuthRouteGuard from '../components/AuthRouteGuard';
 

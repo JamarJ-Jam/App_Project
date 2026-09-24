@@ -20,15 +20,15 @@ import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { Ionicons } from '@expo/vector-icons';
 
-import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
-import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
-import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
+import { useTheme } from '../../src/context/ThemeContext';
+import { LightTheme } from '../../src/constants/colors';
+import { useAuth } from '../../src/context/AuthContext';
 
 import {
   loadUserProfile,
   saveUserProfile,
   UserProfile,
-} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/userProfileStorage';
+} from '../../src/storage/userProfileStorage';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 

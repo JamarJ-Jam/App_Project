@@ -12,8 +12,8 @@ import { useRouter } from 'expo-router';
 import LottieView from 'lottie-react-native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
-import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
+import { useTheme } from '../../src/context/ThemeContext';
+import { LightTheme } from '../../src/constants/colors';
 
 const { width } = Dimensions.get('window');
 
@@ -74,7 +74,7 @@ export default function EntrySplashScreen() {
         <View style={styles.mascotFrame}>
           <LottieView
             ref={lottieRef}
-            source={require('/home/jamarj/repos/App/App_Project/niche-habit-tracker/assets/my_chawgee_mascot.json')}
+            source={require('../../assets/my_chawgee_mascot.json')}
             autoPlay
             loop={false}
             onAnimationFinish={triggerUIEntrance}

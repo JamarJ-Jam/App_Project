@@ -17,10 +17,10 @@ import * as Haptics from 'expo-haptics';
 import * as Calendar from 'expo-calendar/legacy';
 import { Ionicons } from '@expo/vector-icons';
 
-import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
-import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
-import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
-import { saveOnboardingProfile } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/userProfileStorage';
+import { useTheme } from '../../src/context/ThemeContext';
+import { useAuth } from '../../src/context/AuthContext';
+import { LightTheme } from '../../src/constants/colors';
+import { saveOnboardingProfile } from '../../src/storage/userProfileStorage';
 import { submitChawgeeOnboarding } from '../../src/services/chawgeeApi';
 import { ownsOnboardingRequest } from '../../src/services/onboardingRequestOwnership';
 

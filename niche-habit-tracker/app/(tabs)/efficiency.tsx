@@ -16,9 +16,9 @@ import {
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
-import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
-import { loadUserProfile } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/userProfileStorage';
+import { useTheme } from '../../src/context/ThemeContext';
+import { LightTheme } from '../../src/constants/colors';
+import { loadUserProfile } from '../../src/storage/userProfileStorage';
 import {
   addTask,
   CalendarTask,
@@ -28,7 +28,7 @@ import {
   TaskCategory,
   TaskPriority,
   updateTask,
-} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/efficiencyStorage';
+} from '../../src/storage/efficiencyStorage';
 import {
   addManualDeepWorkSession,
   DeepWorkSession,
@@ -36,13 +36,13 @@ import {
   getDeepWorkSessions,
   startDeepWorkSession,
   stopDeepWorkSession,
-} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/deepWorkStorage';
-import { cancelStoredTaskNotifications } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/services/taskNotificationService';
+} from '../../src/storage/deepWorkStorage';
+import { cancelStoredTaskNotifications } from '../../src/services/taskNotificationService';
 import {
   CalendarEventContext,
   getCalendarEventContext,
   rescheduleCalendarEvent,
-} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/services/calendarTaskService';
+} from '../../src/services/calendarTaskService';
 
 const toLocalDateKey = (date = new Date()): string => {
   const year = date.getFullYear();

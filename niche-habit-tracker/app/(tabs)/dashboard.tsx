@@ -19,30 +19,30 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { useTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/ThemeContext';
-import { useAuth } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/context/AuthContext';
-import { LightTheme } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
-import { fetchChawgeeBriefing } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/services/chawgeeApi';
-import { buildChawgeeContext } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/services/chawgeeContext';
+import { useTheme } from '../../src/context/ThemeContext';
+import { useAuth } from '../../src/context/AuthContext';
+import { LightTheme } from '../../src/constants/colors';
+import { fetchChawgeeBriefing } from '../../src/services/chawgeeApi';
+import { buildChawgeeContext } from '../../src/services/chawgeeContext';
 import {
   getDashboardRangeComparison,
-} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/dashboardAnalytics';
-import { getUserScopedStorageKey } from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/userScopedStorage';
+} from '../../src/storage/dashboardAnalytics';
+import { getUserScopedStorageKey } from '../../src/storage/userScopedStorage';
 import {
   CalendarTask,
   fetchDeviceEvents,
   getTasks,
   setTaskCompleted,
   setTaskOutcome,
-} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/efficiencyStorage';
+} from '../../src/storage/efficiencyStorage';
 import {
   loadUserProfile,
-} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/storage/userProfileStorage';
+} from '../../src/storage/userProfileStorage';
 import {
   cancelStoredTaskNotifications,
   runTimelineNotificationTransaction,
   StoredTaskNotifications,
-} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/services/taskNotificationService';
+} from '../../src/services/taskNotificationService';
 
 const STORAGE_KEY_CHAWGEE_BRIEFING = '@chawgee_briefing';
 type RangePreset = 'today' | '7d' | '14d' | '30d' | 'custom';

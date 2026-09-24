@@ -13,7 +13,7 @@ import {
   DuskTheme,
   DarkTheme,
   Theme,
-} from '/home/jamarj/repos/App/App_Project/niche-habit-tracker/src/constants/colors';
+} from '../constants/colors';
 
 export type ThemePreference = 'light' | 'dark' | 'auto';
 export type AutomaticThemePhase = 'light' | 'dusk' | 'dark';
