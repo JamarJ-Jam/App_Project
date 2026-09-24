@@ -5,6 +5,8 @@ export class RecoveryEvidenceMismatchError extends Error {}
 export const RECOVERY_INTERRUPTION_KEY = 'chawgee.auth.callback-interruption.v1';
 // Deliberately constant: this is a restriction, never a credential or a grant.
 export const RECOVERY_INTERRUPTION_VALUE = '{"version":1,"status":"unresolved_callback"}';
+export const ADMISSION_RECEIPT_KEY = 'chawgee.auth.admission-receipt.v1';
+const ADMISSION_RECEIPT_VERSION = 1;
 
 type InterruptionStorage = {
   getItem(key: string): Promise<string | null>;
@@ -28,6 +30,7 @@ export class AuthLifecycleCoordinator {
   private readonly evidence = new Map<string, string>();
   private baselineIdentity: string | null = null;
   private baselineSessionKey: string | null = null;
+  private admittedSubject: string | null = null;
   private readonly interruptionStorage?: InterruptionStorage;
 
   constructor(interruptionStorage?: InterruptionStorage) {
@@ -64,14 +67,56 @@ export class AuthLifecycleCoordinator {
     if (this.checked) return;
     this.phase = 'checking';
     try {
-      const marker = await this.interruptionStorage?.getItem(RECOVERY_INTERRUPTION_KEY);
+      const [marker, receipt] = await Promise.all([
+        this.interruptionStorage?.getItem(RECOVERY_INTERRUPTION_KEY),
+        this.interruptionStorage?.getItem(ADMISSION_RECEIPT_KEY),
+      ]);
       // Unknown/corrupt metadata is also a restriction, not permission to proceed.
       this.phase = marker == null ? 'none' : 'interrupted';
+      this.admittedSubject = this.parseAdmissionReceipt(receipt);
       this.checked = true;
     } catch {
+      this.admittedSubject = null;
       this.phase = 'interrupted';
       throw new Error('Unable to resolve authentication state.');
     }
+  }
+
+  hasAdmissionReceipt(subject: string): boolean {
+    return this.admittedSubject === subject;
+  }
+
+  revokeAdmissionReceipt(): void {
+    this.admittedSubject = null;
+  }
+
+  async beginAdmission(owner: number): Promise<void> {
+    if (!this.busy || !this.canReconcile || !this.ownsOperation(owner)) {
+      throw new Error('Authentication operation is no longer current.');
+    }
+    await this.clearAdmissionReceipt();
+  }
+
+  async recordAdmission(owner: number, subject: string): Promise<void> {
+    if (!this.busy || !this.canReconcile || !this.ownsOperation(owner) || !subject) {
+      throw new Error('Authentication operation is no longer current.');
+    }
+    if (!this.interruptionStorage) throw new Error('Authentication admission storage is unavailable.');
+    await this.interruptionStorage.setItem(
+      ADMISSION_RECEIPT_KEY,
+      JSON.stringify({ version: ADMISSION_RECEIPT_VERSION, subject }),
+    );
+    if (!this.busy || !this.canReconcile || !this.ownsOperation(owner)) {
+      await this.interruptionStorage.removeItem(ADMISSION_RECEIPT_KEY);
+      throw new Error('Authentication operation is no longer current.');
+    }
+    this.admittedSubject = subject;
+  }
+
+  async clearAdmissionReceipt(): Promise<void> {
+    this.revokeAdmissionReceipt();
+    if (!this.interruptionStorage) throw new Error('Authentication admission storage is unavailable.');
+    await this.interruptionStorage.removeItem(ADMISSION_RECEIPT_KEY);
   }
 
   async beginCallback(owner: number, baseline: SessionIdentity | null): Promise<void> {
@@ -106,16 +151,10 @@ export class AuthLifecycleCoordinator {
   /** Called only with the successful SDK exchange result, never parsed URL intent. */
   async finishCallback(owner: number, session: SessionIdentity, redirectType?: string | null, intent?: AuthCallbackIntent): Promise<boolean> {
     if (!this.ownsOperation(owner) || this.callbackOwner !== owner) throw new Error('Stale callback.');
-    if (redirectType === 'recovery') this.recordRecoveryEvidence(owner, session, 'exchange_redirect_type');
     if (this.baselineIdentity && this.baselineIdentity !== session.user.id) {
       throw new Error('Conflicting callback identity.');
     }
-    const recovery = this.evidence.get(session.access_token) === session.user.id;
-    if ((intent === 'recovery' && !recovery) || (intent === 'signup' && recovery) ||
-        (recovery && redirectType != null && redirectType !== 'recovery')) {
-      // Keep the restriction/marker intact until the existing owned cleanup.
-      throw new RecoveryEvidenceMismatchError('Callback recovery evidence does not match.');
-    }
+    const recovery = this.hasVerifiedRecoveryEvidence(owner, session, redirectType, intent);
     if (recovery) {
       this.phase = 'recovery';
       this.invalidate();
@@ -126,6 +165,18 @@ export class AuthLifecycleCoordinator {
     this.callbackOwner = null;
     this.evidence.clear();
     return false;
+  }
+
+  hasVerifiedRecoveryEvidence(owner: number, session: SessionIdentity, redirectType?: string | null, intent?: AuthCallbackIntent): boolean {
+    if (!this.ownsOperation(owner) || this.callbackOwner !== owner) throw new Error('Stale callback.');
+    if (redirectType === 'recovery') this.recordRecoveryEvidence(owner, session, 'exchange_redirect_type');
+    const recovery = this.evidence.get(session.access_token) === session.user.id;
+    if ((intent === 'recovery' && !recovery) || (intent === 'signup' && recovery) ||
+        (recovery && redirectType != null && redirectType !== 'recovery')) {
+      // Keep the restriction/marker intact until the existing owned cleanup.
+      throw new RecoveryEvidenceMismatchError('Callback recovery evidence does not match.');
+    }
+    return recovery;
   }
 
   /** Unexpected SDK recovery evidence restricts access but never grants admission. */
@@ -178,5 +229,17 @@ export class AuthLifecycleCoordinator {
     return generation === this.generation &&
       identityKey === this.identityKey &&
       sessionKey === this.sessionKey;
+  }
+
+  private parseAdmissionReceipt(receipt: string | null | undefined): string | null {
+    if (!receipt) return null;
+    try {
+      const parsed = JSON.parse(receipt) as { version?: unknown; subject?: unknown };
+      return parsed.version === ADMISSION_RECEIPT_VERSION && typeof parsed.subject === 'string' && parsed.subject
+        ? parsed.subject
+        : null;
+    } catch {
+      return null;
+    }
   }
 }

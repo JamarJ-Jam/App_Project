@@ -2,7 +2,11 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Session } from '@supabase/supabase-js';
 import * as WebBrowser from 'expo-web-browser';
-import { evaluateProviderIdentity, type AuthProvider as IdentityProvider } from '../auth/authProviderIdentity';
+import {
+  evaluateProviderIdentity,
+  validateProviderIdentityStructure,
+  type AuthProvider as IdentityProvider,
+} from '../auth/authProviderIdentity';
 import { getSupabaseClient } from '../auth/supabaseClient';
 import { AuthLifecycleCoordinator, RecoveryEvidenceMismatchError } from '../auth/authLifecycle';
 import { AuthCallbackCoordinator, type CallbackResult } from '../auth/authCallbackCoordinator';
@@ -82,7 +86,7 @@ const LEGACY_MOCK_STORAGE_KEY = '@accountability_legacy_mock_session';
 const safeAuthMessage = (operation: 'sign in' | 'create account'): string =>
   `Unable to ${operation}. Check your details and try again.`;
 
-const accountToUser = (session: Session, account: BootstrapAccount, provider: IdentityProvider): User => ({
+const accountToUser = (session: Session, account: BootstrapAccount, provider?: IdentityProvider): User => ({
   id: account.id,
   email: session.user.email ?? '',
   name: typeof session.user.user_metadata?.full_name === 'string'
@@ -165,7 +169,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return owner;
   };
 
-  const reconcileSession = useCallback(async (session: Session | null, expectedProvider?: IdentityProvider): Promise<AuthActionResult> => {
+  const reconcileSession = useCallback(async (
+    session: Session | null,
+    expectedProvider?: IdentityProvider,
+    admissionOwner?: number,
+  ): Promise<AuthActionResult> => {
     if (!authLifecycle.current.canReconcile) {
       publishRestriction();
       return { status: 'verification_required' };
@@ -177,10 +185,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { status: 'verification_required' };
     }
 
-    const identity = expectedProvider === undefined && session.user.identities?.length !== 1
-      ? { status: 'unsupported_identity' as const }
-      : evaluateProviderIdentity(session.user, expectedProvider);
-    if (identity.status === 'unsupported_identity') {
+    const linkedWithoutProvenance = expectedProvider === undefined && session.user.identities?.length !== 1;
+    const structure = linkedWithoutProvenance ? validateProviderIdentityStructure(session.user) : null;
+    const identity = linkedWithoutProvenance ? null : evaluateProviderIdentity(session.user, expectedProvider);
+    if (structure?.status === 'unsupported_identity' || identity?.status === 'unsupported_identity' ||
+        (linkedWithoutProvenance && !authLifecycle.current.hasAdmissionReceipt(session.user.id))) {
       // Revoke pending bootstrap even if the subject/token did not change.
       authLifecycle.current.invalidate();
       clearAuthenticatedState();
@@ -188,7 +197,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAuthError('Unable to verify your sign-in provider.');
       throw new Error('Unable to initialize your Chawgee account. Sign-in provider is not supported.');
     }
-    if (identity.status === 'verification_required') {
+    if (identity?.status === 'verification_required') {
       authLifecycle.current.invalidate();
       authLifecycle.current.beginSession(session.user.id, session.access_token);
       setUser(null);
@@ -198,6 +207,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { status: 'verification_required' };
     }
 
+    if (admissionOwner !== undefined) await authLifecycle.current.recordAdmission(admissionOwner, session.user.id);
     const generation = authLifecycle.current.beginSession(session.user.id, session.access_token);
     const bootstrapKey = `${generation}:${session.access_token}`;
     const existing = bootstrapPromises.current.get(bootstrapKey);
@@ -209,7 +219,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!authLifecycle.current.isCurrent(generation, session.user.id, session.access_token)) {
           return { status: 'verification_required' };
         }
-        const nextUser = accountToUser(session, account, identity.provider);
+        const nextUser = accountToUser(session, account, identity?.status === 'eligible' ? identity.provider : undefined);
         setUser(nextUser);
         setAuthError(null);
         setPendingVerificationEmail(null);
@@ -426,18 +436,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             publishRestriction();
           },
           admitSession: async (session, redirectType, callbackIntent) => {
-            if (callbackProvider === undefined && session.user.identities?.length !== 1) {
-              return { status: 'failed', reason: 'verification_failed' };
-            }
-            const identity = evaluateProviderIdentity(session.user, callbackProvider);
-            if (admittedGoogle) {
-              if (identity.status !== 'eligible' || identity.provider !== 'google') {
-                return { status: 'failed', reason: 'verification_failed' };
-              }
-            }
             let recovery: boolean;
             try {
-              recovery = await lifecycle.finishCallback(owner, session, redirectType, callbackIntent);
+              recovery = lifecycle.hasVerifiedRecoveryEvidence(owner, session, redirectType, callbackIntent);
             } catch (error) {
               if (error instanceof RecoveryEvidenceMismatchError) {
                 return { status: 'failed', reason: 'recovery_evidence_mismatch', intent: 'recovery' };
@@ -445,12 +446,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               throw error;
             }
             if (recovery) {
+              await lifecycle.finishCallback(owner, session, redirectType, callbackIntent);
               publishRestriction();
               return { status: 'recovery' };
             }
-            if (identity.status === 'eligible' && identity.provider === 'google' && !admittedGoogle) {
+            if (callbackProvider === undefined && session.user.identities?.length !== 1) {
               return { status: 'failed', reason: 'verification_failed' };
             }
+            const identity = evaluateProviderIdentity(session.user, callbackProvider);
+            if (identity.status !== 'eligible' || (admittedGoogle && identity.provider !== 'google')) {
+              return { status: 'failed', reason: 'verification_failed' };
+            }
+            await lifecycle.finishCallback(owner, session, redirectType, callbackIntent);
+            await lifecycle.recordAdmission(owner, session.user.id);
             return null;
           },
         });
@@ -485,6 +493,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await authLifecycle.current.checkInterruption();
           client = await getSupabaseClient();
           await resolveRecovery(client);
+          await authLifecycle.current.beginAdmission(owner);
         } catch {
           throw new Error(safeAuthMessage('sign in'));
         }
@@ -501,7 +510,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           throw new Error(safeAuthMessage('sign in'));
         }
         if (!data.session) throw new Error(safeAuthMessage('sign in'));
-        return await reconcileSession(data.session, 'email');
+        return await reconcileSession(data.session, 'email', owner);
       } catch (error) {
         const message = error instanceof Error && error.message.includes('Chawgee account')
           ? error.message
@@ -521,6 +530,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await authLifecycle.current.checkInterruption();
         const client = await getSupabaseClient();
         await resolveRecovery(client);
+        await authLifecycle.current.beginAdmission(owner);
         const { data, error } = await mutateSdkSession(() => client.auth.signUp({
           email: email.trim(),
           password,
@@ -536,7 +546,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setAuthState('verification_required');
           return { status: 'verification_required' };
         }
-        return await reconcileSession(data.session, 'email');
+        return await reconcileSession(data.session, 'email', owner);
       } catch (error) {
         const message = error instanceof Error && error.message.includes('Chawgee account')
           ? error.message
@@ -558,6 +568,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await authLifecycle.current.checkInterruption();
         const client = await getSupabaseClient();
         await resolveRecovery(client);
+        await authLifecycle.current.beginAdmission(owner);
         if (!authLifecycle.current.ownsOperation(owner)) throw new Error('stale');
 
         const { data, error } = await mutateSdkSession(() => client.auth.signInWithOAuth({
@@ -679,6 +690,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (updateError) return { status: 'failed', reason: 'update_failed' };
 
       try {
+        await lifecycle.clearAdmissionReceipt();
         await lifecycle.resolveInterruption(async () => {
           const { error } = await client.auth.signOut({ scope: 'local' });
           if (error) throw new Error('Unable to terminate the recovery session.');
@@ -695,7 +707,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [mutateSdkSession, publishRestriction]);
 
   const signOut = async () => {
+    const ordinarySignOut = !user?.isGuest;
     const owner = invalidateAuthWork();
+    if (ordinarySignOut) authLifecycle.current.revokeAdmissionReceipt();
     clearAuthenticatedState();
     setAuthState('unauthenticated');
     return authLifecycle.current.runExclusive(async () => {
@@ -703,16 +717,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         await authLifecycle.current.checkInterruption();
         if (!authLifecycle.current.canReconcile) {
+          await authLifecycle.current.clearAdmissionReceipt();
           const client = await getSupabaseClient();
           const preserved = await resolveRecovery(client);
           if (preserved) {
             const { error } = await mutateSdkSession(() => client.auth.signOut());
             if (error) throw error;
           }
-        } else if (!user?.isGuest) {
-          const client = await getSupabaseClient();
-          const { error } = await mutateSdkSession(() => client.auth.signOut());
-          if (error) throw error;
+        } else if (ordinarySignOut) {
+          let cleanupFailed = false;
+          try {
+            await authLifecycle.current.clearAdmissionReceipt();
+          } catch {
+            cleanupFailed = true;
+          }
+          try {
+            const client = await getSupabaseClient();
+            const { error } = await mutateSdkSession(() => client.auth.signOut());
+            if (error) cleanupFailed = true;
+          } catch {
+            cleanupFailed = true;
+          }
+          if (cleanupFailed) {
+            try {
+              await authLifecycle.current.interruptSession();
+            } finally {
+              publishRestriction();
+            }
+            throw new Error('Unable to sign out right now.');
+          }
         }
         await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
       } catch {

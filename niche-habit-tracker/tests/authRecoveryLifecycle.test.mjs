@@ -9,7 +9,11 @@ import * as redirectModule from '../src/auth/authRedirect.ts';
 import * as providerModule from '../src/auth/authProviderIdentity.ts';
 import { resolveRouteAccess } from '../src/auth/routeAccess.ts';
 
-const { RECOVERY_INTERRUPTION_KEY: markerKey, RECOVERY_INTERRUPTION_VALUE: markerValue } = lifecycleModule;
+const {
+  ADMISSION_RECEIPT_KEY: admissionReceiptKey,
+  RECOVERY_INTERRUPTION_KEY: markerKey,
+  RECOVERY_INTERRUPTION_VALUE: markerValue,
+} = lifecycleModule;
 const url = (code = 'synthetic-code') => `${redirectModule.AUTH_CALLBACK_URI}?code=${code}`;
 const session = (id = 'recovery', token = `${id}-synthetic-token`) => ({
   user: {
@@ -44,7 +48,12 @@ function harness(options = {}) {
       if (failures.write) throw new Error('synthetic storage failure');
       calls.writes.push([key, value]); disk.metadata.set(key, value);
     },
-    async removeItem(key) { if (failures.remove) throw new Error('synthetic storage failure'); disk.metadata.delete(key); },
+    async removeItem(key) {
+      if (failures.remove || (failures.removeAdmissionReceipt && key === admissionReceiptKey)) {
+        throw new Error('synthetic storage failure');
+      }
+      disk.metadata.delete(key);
+    },
   };
   const emit = async (event, value = disk.sdkSession) => {
     for (const listener of listeners) await listener(event, value);
@@ -323,6 +332,7 @@ test('ordinary verification callback still bootstraps once and completes authent
   assert.equal(h.value.authState, 'authenticated');
   assert.equal(h.calls.bootstrap.length, 1);
   assert.equal(h.disk.metadata.has(markerKey), false);
+  assert.equal(h.disk.metadata.get(admissionReceiptKey), '{"version":1,"subject":"verified"}');
   assert.equal(h.calls.signOut.length, 0);
 });
 
@@ -340,7 +350,7 @@ test('normal restore, refresh, USER_UPDATED, logout and new login still reconcil
   await h.value.signIn('new@example.test', 'synthetic-password');
   assert.equal(h.value.authState, 'authenticated');
   assert.equal(h.calls.bootstrap.length, 4);
-  assert.equal(h.calls.writes.length, 0);
+  assert.equal(h.disk.metadata.get(admissionReceiptKey), '{"version":1,"subject":"new-login"}');
 });
 
 test('unverified sessions and signup without a session preserve verification_required', async () => {
@@ -863,6 +873,25 @@ const linkedProviderSession = (id = 'linked-subject') => {
   return value;
 };
 
+test('verified linked recovery remains provider-neutral and completion clears continuity authority', async () => {
+  const linked = linkedProviderSession();
+  const disk = {
+    metadata: new Map([[admissionReceiptKey, '{"version":1,"subject":"linked-subject"}']]),
+    sdkSession: null,
+    app: new Map(),
+  };
+  const h = await started({ disk, exchangeSession: linked, events: ['PASSWORD_RECOVERY'] });
+  const result = await h.value.processAuthCallback(recoveryUrl('linked-recovery'));
+  assert.equal(result.status, 'recovery');
+  assert.equal(h.value.authState, 'recovery');
+  assert.equal(h.value.user, null);
+  assert.equal(h.calls.bootstrap.length, 0);
+  assert.equal(disk.metadata.has(admissionReceiptKey), true);
+  assert.equal((await h.value.completePasswordRecovery(newPassword)).status, 'completed');
+  assert.equal(disk.metadata.has(admissionReceiptKey), false);
+  assert.equal(h.calls.bootstrap.length, 0);
+});
+
 for (const provider of ['email', 'google']) {
   test(`${provider} restoration maps trusted provider and backend account ID`, async () => {
     const value = providerSession(provider);
@@ -927,6 +956,79 @@ test('linked SDK event without operation provenance cannot select email or boots
   assert.equal(h.value.authState, 'bootstrap_failed');
   assert.equal(h.value.user, null);
   assert.equal(h.calls.bootstrap.length, 0);
+});
+
+test('matching admission receipt restores a coherent linked identity without selecting a provider', async () => {
+  const linked = linkedProviderSession();
+  const disk = {
+    metadata: new Map([[admissionReceiptKey, '{"version":1,"subject":"linked-subject"}']]),
+    sdkSession: linked,
+    app: new Map(),
+  };
+  const h = await started({ disk });
+  assert.equal(h.value.authState, 'authenticated');
+  assert.equal(h.value.user.provider, undefined);
+  assert.deepEqual(h.calls.bootstrap, [linked.access_token]);
+  await h.value.signOut();
+  assert.equal(disk.metadata.has(admissionReceiptKey), false);
+});
+
+test('receipt deletion failure during ordinary sign-out cannot preserve linked cold restoration', async () => {
+  const linked = linkedProviderSession();
+  const disk = {
+    metadata: new Map([[admissionReceiptKey, '{"version":1,"subject":"linked-subject"}']]),
+    sdkSession: linked,
+    app: new Map(),
+  };
+  const h = await started({ disk, failures: { removeAdmissionReceipt: true } });
+  assert.equal(h.value.authState, 'authenticated');
+  await assert.rejects(h.value.signOut());
+  assert.equal(disk.metadata.has(admissionReceiptKey), true);
+  assert.equal(disk.sdkSession, null);
+  assert.equal(disk.metadata.has(markerKey), true);
+
+  const restarted = await started({ disk });
+  assert.equal(restarted.value.authState, 'unauthenticated');
+  assert.equal(restarted.calls.bootstrap.length, 0);
+});
+
+test('admission receipt cannot authorize a different linked subject', async () => {
+  const linked = linkedProviderSession('linked-b');
+  const disk = {
+    metadata: new Map([[admissionReceiptKey, '{"version":1,"subject":"linked-a"}']]),
+    sdkSession: linked,
+    app: new Map(),
+  };
+  const h = await started({ disk });
+  assert.equal(h.value.authState, 'unauthenticated');
+  assert.equal(h.calls.bootstrap.length, 0);
+});
+
+test('matching linked admission receipt persists through warm SDK events', async () => {
+  const linked = linkedProviderSession();
+  const disk = {
+    metadata: new Map([[admissionReceiptKey, '{"version":1,"subject":"linked-subject"}']]),
+    sdkSession: linked,
+    app: new Map(),
+  };
+  const h = await started({ disk });
+  await h.emit('SIGNED_IN');
+  await h.emit('TOKEN_REFRESHED');
+  await h.emit('USER_UPDATED');
+  await flush();
+  assert.equal(h.value.authState, 'authenticated');
+  assert.equal(h.calls.bootstrap.length, 2);
+});
+
+test('superseded ordinary callback cannot leave an admission receipt', async () => {
+  const exchangeWait = deferred();
+  const h = await started({ events: ['SIGNED_IN'], exchangeWait, exchangeSession: session('superseded') });
+  const callback = h.value.processAuthCallback(url('superseded-callback'));
+  const signOut = h.value.signOut();
+  exchangeWait.resolve();
+  await callback;
+  await signOut;
+  assert.equal(h.disk.metadata.has(admissionReceiptKey), false);
 });
 
 test('password sign-in for a linked Supabase user still requires confirmed email', async () => {

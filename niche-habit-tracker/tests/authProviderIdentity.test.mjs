@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { evaluateProviderIdentity } from '../src/auth/authProviderIdentity.ts';
+import { evaluateProviderIdentity, validateProviderIdentityStructure } from '../src/auth/authProviderIdentity.ts';
 
 const user = (provider = 'email') => ({
   id: 'supabase-subject', email: 'same@gmail.com', email_confirmed_at: '2026-01-01',
@@ -36,6 +36,13 @@ test('coherent linked email and Google identities admit the expected provider', 
   const value = linkedUser();
   assert.deepEqual(evaluateProviderIdentity(value, 'email'), { status: 'eligible', provider: 'email' });
   assert.deepEqual(evaluateProviderIdentity(value, 'google'), { status: 'eligible', provider: 'google' });
+});
+
+test('neutral linked continuity validation never selects a provider', () => {
+  assert.deepEqual(validateProviderIdentityStructure(linkedUser()), { status: 'coherent' });
+  const malformed = linkedUser();
+  malformed.identities[1].user_id = 'another-subject';
+  assert.deepEqual(validateProviderIdentityStructure(malformed), { status: 'unsupported_identity' });
 });
 
 test('linked email context preserves email confirmation requirements', () => {

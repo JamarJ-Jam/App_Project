@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { AuthLifecycleCoordinator } from '../src/auth/authLifecycle.ts';
+import { ADMISSION_RECEIPT_KEY, AuthLifecycleCoordinator } from '../src/auth/authLifecycle.ts';
+
+const receiptStorage = (items = new Map()) => ({
+  getItem: async (key) => items.get(key) ?? null,
+  setItem: async (key, value) => { items.set(key, value); },
+  removeItem: async (key) => { items.delete(key); },
+});
 
 test('current generation may commit', () => {
   const lifecycle = new AuthLifecycleCoordinator();
@@ -51,4 +57,36 @@ test('same-token reconciliation keeps the same generation for deduplication', ()
   const firstGeneration = lifecycle.beginSession('user-a', 'token-a');
   const secondGeneration = lifecycle.beginSession('user-a', 'token-a');
   assert.equal(secondGeneration, firstGeneration);
+});
+
+test('admission receipt authorizes only its exact subject and malformed receipts fail closed', async () => {
+  const items = new Map([[ADMISSION_RECEIPT_KEY, '{"version":1,"subject":"user-a"}']]);
+  const restored = new AuthLifecycleCoordinator(receiptStorage(items));
+  await restored.checkInterruption();
+  assert.equal(restored.hasAdmissionReceipt('user-a'), true);
+  assert.equal(restored.hasAdmissionReceipt('user-b'), false);
+
+  const malformed = new AuthLifecycleCoordinator(receiptStorage(new Map([[ADMISSION_RECEIPT_KEY, '{not-json}']])));
+  await malformed.checkInterruption();
+  assert.equal(malformed.hasAdmissionReceipt('user-a'), false);
+
+  const unsupported = new AuthLifecycleCoordinator(receiptStorage(new Map([[ADMISSION_RECEIPT_KEY, '{"version":2,"subject":"user-a"}']])));
+  await unsupported.checkInterruption();
+  assert.equal(unsupported.hasAdmissionReceipt('user-a'), false);
+});
+
+test('admission receipts are written by the current operation and cleared on sign-out', async () => {
+  const items = new Map();
+  const lifecycle = new AuthLifecycleCoordinator(receiptStorage(items));
+  await lifecycle.runExclusive(async () => {
+    await lifecycle.checkInterruption();
+    const owner = lifecycle.nextOperation();
+    await lifecycle.beginAdmission(owner);
+    await lifecycle.recordAdmission(owner, 'user-a');
+  });
+  assert.equal(items.get(ADMISSION_RECEIPT_KEY), '{"version":1,"subject":"user-a"}');
+  assert.equal(lifecycle.hasAdmissionReceipt('user-a'), true);
+  await lifecycle.clearAdmissionReceipt();
+  assert.equal(items.has(ADMISSION_RECEIPT_KEY), false);
+  assert.equal(lifecycle.hasAdmissionReceipt('user-a'), false);
 });
