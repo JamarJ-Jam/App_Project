@@ -25,7 +25,7 @@ const adjustNutritionPlanSchema = z.object({
 export const agentTools = {
   addCalendarEvent: tool({
     description: 'Add a scheduled event, deep work block, or workout to the user calendar.',
-    parameters: addCalendarEventSchema,
+    inputSchema: addCalendarEventSchema,
     execute: async (input: z.infer<typeof addCalendarEventSchema>) => {
       const { title, startTime, durationMinutes, category } = input;
       return { action: 'ADD_CALENDAR_EVENT', title, startTime, durationMinutes, category };
@@ -34,7 +34,7 @@ export const agentTools = {
 
   updateBiometrics: tool({
     description: 'Update user biometric stats immediately when tracked or changed.',
-    parameters: updateBiometricsSchema,
+    inputSchema: updateBiometricsSchema,
     execute: async (biometrics: z.infer<typeof updateBiometricsSchema>) => {
       return { action: 'UPDATE_BIOMETRICS', biometrics, timestamp: new Date().toISOString() };
     },
@@ -42,7 +42,7 @@ export const agentTools = {
 
   adjustNutritionPlan: tool({
     description: 'Modify daily caloric intake and macro targets based on fitness performance results.',
-    parameters: adjustNutritionPlanSchema,
+    inputSchema: adjustNutritionPlanSchema,
     execute: async (input: z.infer<typeof adjustNutritionPlanSchema>) => {
       const { newCalorieTarget, reasoning } = input;
       return { action: 'ADJUST_NUTRITION_PLAN', newCalorieTarget, reasoning };
