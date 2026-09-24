@@ -154,3 +154,53 @@ test('readiness reports only success/failure and missing config never opens a po
   assert.equal(await missing.ready(), false);
   await assert.rejects(missing.query('SELECT 1'), ConfigurationError);
 });
+
+
+test('temporary readiness diagnostic emits only allowlisted fields, never connection secrets', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
+  const secret = 'postgresql://private-user:private-password@private-host/private-db';
+  for (const code of ['ENOTFOUND', 'ERR_TLS_CERT_ALTNAME_INVALID', '28P01']) {
+    const failure = Object.assign(new Error(`Connection failed: ${secret}`), {
+      code, syscall: 'connect', hostname: 'private-host', user: 'private-user',
+      password: 'private-password', database: 'private-db', connectionString: secret,
+      stack: secret, cause: new Error(secret), parameters: [secret],
+      certificate: secret, token: secret, apiKey: secret,
+    });
+    const commands: string[] = [];
+    const db = createDatabase(() => getDatabaseConfig('runtime', env), () => ({
+      on() {},
+      async query(sql: string) { commands.push(sql); throw failure; },
+    }) as unknown as Pool);
+    assert.equal(await db.ready(), false);
+    assert.deepEqual(commands, ['SELECT 1']);
+    assert.deepEqual(log.mock.calls.at(-1)?.arguments, [
+      '[TEMPORARY_READINESS_DIAGNOSTIC]', { name: 'Error', code, syscall: 'connect' },
+    ]);
+    const count = log.mock.callCount();
+    await assert.rejects(db.query('SELECT 1'), DatabaseError);
+    assert.equal(log.mock.callCount(), count);
+  }
+  const malicious = Object.assign(new Error(secret), {
+    name: secret, code: secret, syscall: secret, stack: secret,
+  });
+  const db = createDatabase(() => { throw malicious; });
+  assert.equal(await db.ready(), false);
+  assert.deepEqual(log.mock.calls.at(-1)?.arguments, [
+    '[TEMPORARY_READINESS_DIAGNOSTIC]', { name: 'UnknownError' },
+  ]);
+  assert.equal(JSON.stringify(log.mock.calls.map((call) => call.arguments)).includes('private-'), false);
+});
+
+test('temporary readiness diagnostic permits exact safe timeout messages and is silent on success', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
+  assert.equal(await fixture().db.ready(), true);
+  assert.equal(log.mock.callCount(), 0);
+  const message = 'Connection terminated due to connection timeout';
+  const db = createDatabase(() => { throw new Error(message); });
+  assert.equal(await db.ready(), false);
+  assert.deepEqual(log.mock.calls[0].arguments, [
+    '[TEMPORARY_READINESS_DIAGNOSTIC]', { name: 'Error', message },
+  ]);
+  log.mock.mockImplementation(() => { throw new Error('logger failed'); });
+  assert.equal(await db.ready(), false);
+});

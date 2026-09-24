@@ -12,6 +12,44 @@ export interface SqlExecutor {
   query<Row extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]): Promise<QueryResult<Row>>;
 }
 
+// TEMPORARY Railway readiness diagnostic. Remove this helper and restore ready()
+// to query('SELECT 1') after diagnosis. Never serialize the original error:
+// even name/code/message can contain secrets. Admit only known literal values.
+const logReadinessFailure = (error: unknown): void => {
+  const diagnostic: Record<string, string> = { name: 'UnknownError' };
+  const allowed: Record<string, readonly string[]> = {
+    name: ['Error', 'AggregateError', 'TypeError', 'DatabaseError', 'ConfigurationError'],
+    code: [
+      'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN',
+      'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE',
+      'CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'DEPTH_ZERO_SELF_SIGNED_CERT',
+      'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+      'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+      'ERR_TLS_CERT_ALTNAME_INVALID', 'ERR_SSL_WRONG_VERSION_NUMBER',
+      '08000', '08001', '08003', '08004', '08006', '08007', '08P01',
+      '28000', '28P01', '3D000', '42501', '53300', '53400', '57P01', '57P02', '57P03',
+    ],
+    syscall: ['connect', 'getaddrinfo', 'read', 'write'],
+    message: [
+      'Connection terminated unexpectedly', 'Connection terminated',
+      'Connection terminated due to connection timeout',
+      'timeout exceeded when trying to connect', 'Query read timeout',
+      'self-signed certificate in certificate chain', 'self-signed certificate',
+      'unable to verify the first certificate', 'unable to get local issuer certificate',
+      'certificate has expired', 'certificate is not yet valid',
+    ],
+  };
+  try {
+    if (typeof error === 'object' && error !== null) {
+      for (const [field, values] of Object.entries(allowed)) {
+        const value = (error as Record<string, unknown>)[field];
+        if (typeof value === 'string' && values.includes(value)) diagnostic[field] = value;
+      }
+    }
+    console.error('[TEMPORARY_READINESS_DIAGNOSTIC]', diagnostic);
+  } catch { /* Diagnostics must never change readiness failure behavior. */ }
+};
+
 // Factory injection allows lifecycle tests without opening a socket.
 export const createDatabase = (
   getConfig: () => PoolConfig = getDatabaseConfig,
@@ -83,8 +121,9 @@ export const createDatabase = (
   };
 
   const ready = async (): Promise<boolean> => {
-    try { await query('SELECT 1'); return true; }
-    catch { return false; }
+    // TEMPORARY: catch the driver error before query() replaces it with DatabaseError.
+    try { await getPool().query('SELECT 1'); return true; }
+    catch (error) { logReadinessFailure(error); return false; }
   };
 
   const close = (): Promise<void> => {
