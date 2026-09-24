@@ -88,6 +88,13 @@ const changeAlgorithm = (token: string, algorithm: string): string => {
   return `${changedHeader}.${payload}.${signature}`;
 };
 
+const alterSignatureBytes = (token: string): string => {
+  const [header, payload, signature] = token.split('.');
+  const changedSignature = Buffer.from(Buffer.from(signature, 'base64url'));
+  changedSignature[0] ^= 0x01;
+  return `${header}.${payload}.${changedSignature.toString('base64url')}`;
+};
+
 test('auth configuration is lazy, explicit, and rejects malformed values', () => {
   assert.throws(() => getAuthConfig({}), ConfigurationError);
   const valid = getAuthConfig({
@@ -140,7 +147,7 @@ test('preserves email, Google, and linked user sessions at either assurance leve
 test('rejects invalid signature, issuer, audience, expiration, nbf, algorithm, and malformed tokens', async () => {
   const fixture = await createFixture();
   const valid = await fixture.sign();
-  const altered = `${valid.slice(0, -1)}${valid.endsWith('a') ? 'b' : 'a'}`;
+  const altered = alterSignatureBytes(valid);
   await assert.rejects(fixture.verifier.verify(altered), AuthenticationError);
   await assert.rejects(fixture.verifier.verify(await fixture.sign({ issuerValue: 'https://wrong.invalid' })), AuthenticationError);
   await assert.rejects(fixture.verifier.verify(await fixture.sign({ audienceValue: 'wrong-audience' })), AuthenticationError);
