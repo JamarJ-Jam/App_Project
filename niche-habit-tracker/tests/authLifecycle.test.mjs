@@ -90,3 +90,23 @@ test('admission receipts are written by the current operation and cleared on sig
   assert.equal(items.has(ADMISSION_RECEIPT_KEY), false);
   assert.equal(lifecycle.hasAdmissionReceipt('user-a'), false);
 });
+
+test('admission-cleanup interruption retries receipt and SDK cleanup before release', async () => {
+  const items = new Map();
+  const lifecycle = new AuthLifecycleCoordinator(receiptStorage(items));
+  await lifecycle.runExclusive(async () => {
+    await lifecycle.checkInterruption();
+    await lifecycle.interruptSession(true);
+  });
+  let receiptCleanupCalls = 0;
+  let sdkCleanupCalls = 0;
+  await lifecycle.runExclusive(async () => {
+    await lifecycle.resolveInterruption(
+      async () => { sdkCleanupCalls += 1; },
+      async () => { receiptCleanupCalls += 1; },
+    );
+  });
+  assert.equal(receiptCleanupCalls, 1);
+  assert.equal(sdkCleanupCalls, 1);
+  assert.equal(items.has('chawgee.auth.callback-interruption.v1'), false);
+});

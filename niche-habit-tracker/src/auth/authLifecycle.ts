@@ -5,6 +5,7 @@ export class RecoveryEvidenceMismatchError extends Error {}
 export const RECOVERY_INTERRUPTION_KEY = 'chawgee.auth.callback-interruption.v1';
 // Deliberately constant: this is a restriction, never a credential or a grant.
 export const RECOVERY_INTERRUPTION_VALUE = '{"version":1,"status":"unresolved_callback"}';
+const ADMISSION_CLEANUP_INTERRUPTION_VALUE = '{"version":1,"status":"unresolved_callback","cleanup":"admission_receipt"}';
 export const ADMISSION_RECEIPT_KEY = 'chawgee.auth.admission-receipt.v1';
 const ADMISSION_RECEIPT_VERSION = 1;
 
@@ -31,6 +32,7 @@ export class AuthLifecycleCoordinator {
   private baselineIdentity: string | null = null;
   private baselineSessionKey: string | null = null;
   private admittedSubject: string | null = null;
+  private requiresAdmissionReceiptCleanup = false;
   private readonly interruptionStorage?: InterruptionStorage;
 
   constructor(interruptionStorage?: InterruptionStorage) {
@@ -73,6 +75,7 @@ export class AuthLifecycleCoordinator {
       ]);
       // Unknown/corrupt metadata is also a restriction, not permission to proceed.
       this.phase = marker == null ? 'none' : 'interrupted';
+      this.requiresAdmissionReceiptCleanup = this.isAdmissionCleanupInterruption(marker);
       this.admittedSubject = this.parseAdmissionReceipt(receipt);
       this.checked = true;
     } catch {
@@ -180,12 +183,16 @@ export class AuthLifecycleCoordinator {
   }
 
   /** Unexpected SDK recovery evidence restricts access but never grants admission. */
-  async interruptSession(): Promise<void> {
+  async interruptSession(requiresAdmissionReceiptCleanup = false): Promise<void> {
     if (!this.busy) throw new Error('Authentication interruption requires session ownership.');
     this.phase = 'interrupted';
     this.invalidate();
+    this.requiresAdmissionReceiptCleanup = requiresAdmissionReceiptCleanup;
     if (!this.interruptionStorage) throw new Error('Authentication interruption storage is unavailable.');
-    await this.interruptionStorage.setItem(RECOVERY_INTERRUPTION_KEY, RECOVERY_INTERRUPTION_VALUE);
+    await this.interruptionStorage.setItem(
+      RECOVERY_INTERRUPTION_KEY,
+      requiresAdmissionReceiptCleanup ? ADMISSION_CLEANUP_INTERRUPTION_VALUE : RECOVERY_INTERRUPTION_VALUE,
+    );
   }
 
   isUnchangedCallbackSession(session: SessionIdentity): boolean {
@@ -195,16 +202,25 @@ export class AuthLifecycleCoordinator {
   }
 
   /** Only inside the same serial boundary used for every new login/session write. */
-  async resolveInterruption(clearSdkSession: () => Promise<void>): Promise<void> {
+  async resolveInterruption(
+    clearSdkSession: () => Promise<void>,
+    clearAdmissionReceipt?: () => Promise<void>,
+  ): Promise<void> {
     if (!this.busy) throw new Error('Authentication cleanup requires session ownership.');
     if (this.canReconcile) return;
     this.phase = 'interrupted';
     this.invalidate();
-    await clearSdkSession();
+    let cleanupError: unknown;
+    if (this.requiresAdmissionReceiptCleanup && clearAdmissionReceipt) {
+      try { await clearAdmissionReceipt(); } catch (error) { cleanupError = error; }
+    }
+    try { await clearSdkSession(); } catch (error) { cleanupError ??= error; }
+    if (cleanupError) throw cleanupError;
     // A crash or failed deletion before this point keeps startup restricted.
     await this.interruptionStorage?.removeItem(RECOVERY_INTERRUPTION_KEY);
     this.callbackOwner = null;
     this.evidence.clear();
+    this.requiresAdmissionReceiptCleanup = false;
     this.phase = 'none';
   }
 
@@ -240,6 +256,16 @@ export class AuthLifecycleCoordinator {
         : null;
     } catch {
       return null;
+    }
+  }
+
+  private isAdmissionCleanupInterruption(marker: string | null | undefined): boolean {
+    if (!marker) return false;
+    try {
+      const parsed = JSON.parse(marker) as { version?: unknown; status?: unknown; cleanup?: unknown };
+      return parsed.version === 1 && parsed.status === 'unresolved_callback' && parsed.cleanup === 'admission_receipt';
+    } catch {
+      return false;
     }
   }
 }

@@ -153,6 +153,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (error) throw new Error('Unable to resolve authentication state.');
       const current = await client.auth.getSession();
       if (current.error || current.data.session) throw new Error('Unable to resolve authentication state.');
+    }, async () => {
+      await authLifecycle.current.clearAdmissionReceipt();
     });
     if (!preserved) {
       clearAuthenticatedState();
@@ -169,6 +171,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return owner;
   };
 
+  const terminateLocalAuthBoundary = useCallback(async (scope: 'local' | 'global'): Promise<void> => {
+    const lifecycle = authLifecycle.current;
+    let receiptCleanupFailed = false;
+    let cleanupFailed = false;
+    try {
+      await lifecycle.clearAdmissionReceipt();
+    } catch {
+      receiptCleanupFailed = true;
+      cleanupFailed = true;
+    }
+    try {
+      const client = await getSupabaseClient();
+      const { error } = await mutateSdkSession(() => client.auth.signOut({ scope }));
+      if (error) cleanupFailed = true;
+    } catch {
+      cleanupFailed = true;
+    }
+    if (!cleanupFailed) return;
+    try {
+      await lifecycle.interruptSession(receiptCleanupFailed);
+    } finally {
+      publishRestriction();
+    }
+    throw new Error('Unable to resolve authentication state.');
+  }, [mutateSdkSession, publishRestriction]);
+
   const reconcileSession = useCallback(async (
     session: Session | null,
     expectedProvider?: IdentityProvider,
@@ -179,7 +207,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { status: 'verification_required' };
     }
     if (!session) {
+      authLifecycle.current.revokeAdmissionReceipt();
       authLifecycle.current.invalidate();
+      try {
+        await authLifecycle.current.runExclusive(async () => {
+          if (!authLifecycle.current.canReconcile) return;
+          await terminateLocalAuthBoundary('local');
+        });
+      } catch {
+        return { status: 'verification_required' };
+      }
       clearAuthenticatedState();
       setAuthState('unauthenticated');
       return { status: 'verification_required' };
@@ -242,7 +279,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     bootstrapPromises.current.set(bootstrapKey, bootstrap);
     return bootstrap;
-  }, [publishRestriction]);
+  }, [publishRestriction, terminateLocalAuthBoundary]);
 
   useEffect(() => {
     let mounted = true;
@@ -263,6 +300,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (error) throw error;
         if (data.session) {
+          const stored = await AsyncStorage.getItem(AUTH_STORAGE_KEY);
+          try {
+            const parsed = stored ? JSON.parse(stored) as User : null;
+            if (parsed?.isGuest) {
+              await terminateLocalAuthBoundary('local');
+              if (!mounted || !authLifecycle.current.ownsOperation(restoreOwner)) return;
+              setUser(parsed);
+              setAuthState('guest');
+              return;
+            }
+          } catch {
+            // Reconciliation remains authoritative when the legacy preference is malformed.
+          }
           await reconcileSession(data.session);
           return;
         }
@@ -372,7 +422,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       lifecycleCoordinator.nextOperation();
       subscription?.unsubscribe();
     };
-  }, [reconcileSession, resolveRecovery, publishRestriction]);
+  }, [reconcileSession, resolveRecovery, publishRestriction, terminateLocalAuthBoundary]);
 
   const processAuthCallback = useCallback((incomingUrl: string, googleProvenance?: { owner: number; flowId: string }): Promise<CallbackResult> => {
     if (googleProvenance && (!authLifecycle.current.ownsOperation(googleProvenance.owner) ||
@@ -612,11 +662,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInAsGuest = async () => {
     const owner = invalidateAuthWork();
+    authLifecycle.current.revokeAdmissionReceipt();
     return authLifecycle.current.runExclusive(async () => {
       if (!authLifecycle.current.ownsOperation(owner)) return;
       try {
         await authLifecycle.current.checkInterruption();
         if (!authLifecycle.current.canReconcile) await resolveRecovery(await getSupabaseClient());
+        if (!authLifecycle.current.ownsOperation(owner)) return;
+        await terminateLocalAuthBoundary('local');
         if (!authLifecycle.current.ownsOperation(owner)) return;
         const nextUser = guestUser();
         await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextUser));
@@ -724,28 +777,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const { error } = await mutateSdkSession(() => client.auth.signOut());
             if (error) throw error;
           }
-        } else if (ordinarySignOut) {
-          let cleanupFailed = false;
-          try {
-            await authLifecycle.current.clearAdmissionReceipt();
-          } catch {
-            cleanupFailed = true;
-          }
-          try {
-            const client = await getSupabaseClient();
-            const { error } = await mutateSdkSession(() => client.auth.signOut());
-            if (error) cleanupFailed = true;
-          } catch {
-            cleanupFailed = true;
-          }
-          if (cleanupFailed) {
-            try {
-              await authLifecycle.current.interruptSession();
-            } finally {
-              publishRestriction();
-            }
-            throw new Error('Unable to sign out right now.');
-          }
+        } else {
+          await terminateLocalAuthBoundary(ordinarySignOut ? 'global' : 'local');
         }
         await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
       } catch {

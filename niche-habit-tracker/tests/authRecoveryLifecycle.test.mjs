@@ -525,6 +525,7 @@ test('external SDK logout still invalidates ordinary bootstrap while it is pendi
   await login;
   assert.equal(h.value.authState, 'unauthenticated');
   assert.equal(h.calls.states.includes('authenticated'), false);
+  assert.equal(h.disk.metadata.has(admissionReceiptKey), false);
 });
 
 const recoveryUrl = (code = 'explicit-recovery') => `${redirectModule.AUTH_CALLBACK_URI}?type=recovery&code=${code}`;
@@ -990,6 +991,121 @@ test('receipt deletion failure during ordinary sign-out cannot preserve linked c
   const restarted = await started({ disk });
   assert.equal(restarted.value.authState, 'unauthenticated');
   assert.equal(restarted.calls.bootstrap.length, 0);
+});
+
+for (const linked of [false, true]) {
+  test(`${linked ? 'linked' : 'ordinary'} authenticated account becomes a durable guest only after local cleanup`, async () => {
+    const authenticated = linked ? linkedProviderSession('account-a') : session('account-a');
+    const disk = {
+      metadata: new Map(linked ? [[admissionReceiptKey, '{"version":1,"subject":"account-a"}']] : []),
+      sdkSession: authenticated,
+      app: new Map(),
+    };
+    const h = await started({ disk });
+    await h.value.signInAsGuest();
+    assert.equal(h.value.authState, 'guest');
+    assert.equal(disk.sdkSession, null);
+    assert.equal(disk.metadata.has(admissionReceiptKey), false);
+    const restarted = await started({ disk });
+    assert.equal(restarted.value.authState, 'guest');
+    assert.equal(restarted.calls.bootstrap.length, 0);
+  });
+}
+
+for (const failures of [
+  { removeAdmissionReceipt: true },
+  { signOut: true },
+  { removeAdmissionReceipt: true, signOut: true },
+  { removeAdmissionReceipt: true, signOut: true, write: true },
+]) {
+  test(`guest transition cleanup failure ${JSON.stringify(failures)} remains quarantined`, async () => {
+    const linked = linkedProviderSession();
+    const disk = {
+      metadata: new Map([[admissionReceiptKey, '{"version":1,"subject":"linked-subject"}']]),
+      sdkSession: linked,
+      app: new Map(),
+    };
+    const h = await started({ disk, failures });
+    await assert.rejects(h.value.signInAsGuest());
+    assert.notEqual(h.value.authState, 'guest');
+    assert.equal(h.value.authState, 'recovery_interrupted');
+    assert.equal(disk.metadata.has(markerKey), failures.write ? false : true);
+    if (failures.removeAdmissionReceipt) assert.equal(disk.metadata.has(admissionReceiptKey), true);
+    if (!failures.signOut) assert.equal(disk.sdkSession, null);
+    if (failures.signOut) assert.equal(disk.sdkSession, linked);
+    assert.equal(disk.app.get('@accountability_user_session')?.includes('Guest User') ?? false, false);
+  });
+}
+
+test('guest transitions require fresh explicit admission for same or different account', async () => {
+  const h = await started();
+  await h.value.signInAsGuest();
+  await h.value.signIn('same@example.test', 'synthetic-password');
+  assert.equal(h.value.authState, 'authenticated');
+  assert.equal(h.disk.metadata.get(admissionReceiptKey), '{"version":1,"subject":"new-login"}');
+  await h.value.signInAsGuest();
+  const different = session('account-b');
+  const restarted = await started({ disk: h.disk, loginSession: different });
+  await restarted.value.signIn('different@example.test', 'synthetic-password');
+  assert.equal(restarted.value.authState, 'authenticated');
+  assert.equal(restarted.disk.metadata.get(admissionReceiptKey), '{"version":1,"subject":"account-b"}');
+});
+
+test('stale SDK auth event cannot rehydrate an account after guest transition', async () => {
+  const account = linkedProviderSession();
+  const disk = {
+    metadata: new Map([[admissionReceiptKey, '{"version":1,"subject":"linked-subject"}']]),
+    sdkSession: account,
+    app: new Map(),
+  };
+  const h = await started({ disk });
+  await h.value.signInAsGuest();
+  for (const event of ['SIGNED_IN', 'TOKEN_REFRESHED', 'USER_UPDATED']) await h.emit(event, account);
+  await flush();
+  assert.equal(h.value.authState, 'guest');
+  assert.equal(h.calls.bootstrap.length, 1);
+});
+
+test('guest transition invalidates a pending authenticated bootstrap', async () => {
+  const bootstrapWait = deferred();
+  const h = await started({ bootstrapWait });
+  const login = h.value.signIn('new@example.test', 'synthetic-password');
+  await flush();
+  const guest = h.value.signInAsGuest();
+  bootstrapWait.resolve();
+  await login;
+  await guest;
+  assert.equal(h.value.authState, 'guest');
+  assert.equal(h.calls.states.includes('authenticated'), false);
+  assert.equal(h.disk.sdkSession, null);
+  assert.equal(h.disk.metadata.has(admissionReceiptKey), false);
+});
+
+test('legacy guest preference plus persisted linked session is resolved to guest only after cleanup', async () => {
+  const linked = linkedProviderSession();
+  const disk = {
+    metadata: new Map([[admissionReceiptKey, '{"version":1,"subject":"linked-subject"}']]),
+    sdkSession: linked,
+    app: new Map([['@accountability_user_session', JSON.stringify({ id: 'guest:legacy', email: 'Guest User', isGuest: true })]]),
+  };
+  const h = await started({ disk });
+  assert.equal(h.value.authState, 'guest');
+  assert.equal(disk.sdkSession, null);
+  assert.equal(disk.metadata.has(admissionReceiptKey), false);
+  assert.equal(h.calls.bootstrap.length, 0);
+});
+
+test('guest sign-out clears unexpected SDK session and admission receipt', async () => {
+  const h = await started();
+  await h.value.signInAsGuest();
+  const linked = linkedProviderSession();
+  h.disk.sdkSession = linked;
+  h.disk.metadata.set(admissionReceiptKey, '{"version":1,"subject":"linked-subject"}');
+  await h.value.signOut();
+  assert.equal(h.value.authState, 'unauthenticated');
+  assert.equal(h.disk.sdkSession, null);
+  assert.equal(h.disk.metadata.has(admissionReceiptKey), false);
+  assert.equal(h.disk.app.has('@accountability_user_session'), false);
 });
 
 test('admission receipt cannot authorize a different linked subject', async () => {
