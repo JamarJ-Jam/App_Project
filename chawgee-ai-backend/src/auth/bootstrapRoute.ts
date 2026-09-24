@@ -1,9 +1,9 @@
 import { Router, type RequestHandler } from 'express';
 
-export const createBootstrapRouter = (authenticationMiddleware: RequestHandler): Router => {
+export const createBootstrapRouter = (...middleware: RequestHandler[]): Router => {
   const router = Router();
 
-  router.post('/api/auth/bootstrap', authenticationMiddleware, (req, res) => {
+  router.post('/api/auth/bootstrap', ...middleware, (req, res) => {
     const auth = req.auth;
     if (!auth) {
       res.status(500).json({ success: false, error: 'Internal server error' });

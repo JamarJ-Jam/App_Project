@@ -12,6 +12,10 @@ export interface AuthenticatedContext {
   accountStatus: 'active';
 }
 
+export interface VerifiedTokenContext {
+  identity: VerifiedIdentity;
+}
+
 export class AuthorizationError extends Error {
   constructor() {
     super('Forbidden');
@@ -24,9 +28,18 @@ export interface AuthenticationMiddlewareDependencies {
   resolveIdentity: (identity: VerifiedIdentity) => Promise<ResolvedAccountIdentity>;
 }
 
+export interface TokenAdmissionDependencies {
+  verifyAccessToken: (token: string) => Promise<VerifiedIdentity>;
+}
+
+export interface IdentityResolutionDependencies {
+  resolveIdentity: (identity: VerifiedIdentity) => Promise<ResolvedAccountIdentity>;
+}
+
 declare global {
   namespace Express {
     interface Request {
+      verifiedToken?: VerifiedTokenContext;
       auth?: AuthenticatedContext;
     }
   }
@@ -46,13 +59,12 @@ const toAuthenticatedContext = (resolved: ResolvedAccountIdentity): Authenticate
   };
 };
 
-export const createAuthenticationMiddleware = (
-  dependencies: AuthenticationMiddlewareDependencies,
+export const createTokenAdmissionMiddleware = (
+  dependencies: TokenAdmissionDependencies,
 ): RequestHandler => async (req: Request, res: Response, next: NextFunction) => {
-  let identity: VerifiedIdentity;
   try {
     const token = parseBearerToken(req.headers.authorization);
-    identity = await dependencies.verifyAccessToken(token);
+    req.verifiedToken = { identity: await dependencies.verifyAccessToken(token) };
   } catch (error) {
     if (error instanceof AuthenticationError) {
       sendFailure(res, 401, 'Unauthorized');
@@ -63,8 +75,20 @@ export const createAuthenticationMiddleware = (
     return;
   }
 
+  next();
+};
+
+export const createIdentityResolutionMiddleware = (
+  dependencies: IdentityResolutionDependencies,
+): RequestHandler => async (req: Request, res: Response, next: NextFunction) => {
+  const verifiedToken = req.verifiedToken;
+  if (!verifiedToken) {
+    sendFailure(res, 500, 'Internal server error');
+    return;
+  }
+
   try {
-    const resolved = await dependencies.resolveIdentity(identity);
+    const resolved = await dependencies.resolveIdentity(verifiedToken.identity);
     req.auth = toAuthenticatedContext(resolved);
     next();
   } catch (error) {
@@ -75,4 +99,17 @@ export const createAuthenticationMiddleware = (
 
     sendFailure(res, 500, 'Internal server error');
   }
+};
+
+export const createAuthenticationMiddleware = (
+  dependencies: AuthenticationMiddlewareDependencies,
+): RequestHandler => {
+  const admitToken = createTokenAdmissionMiddleware(dependencies);
+  const resolveIdentity = createIdentityResolutionMiddleware(dependencies);
+
+  return async (req, res, next) => {
+    let admitted = false;
+    await admitToken(req, res, () => { admitted = true; });
+    if (admitted) await resolveIdentity(req, res, next);
+  };
 };

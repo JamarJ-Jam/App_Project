@@ -12,7 +12,7 @@
     "db:migrate:check": "node --import tsx scripts/migrate.ts check",
     "db:migrate:up": "node --import tsx scripts/migrate.ts up",
     "test:db": "node --import tsx --test tests/database.test.ts",
-    "test:unit": "node --import tsx --test tests/auth.test.ts tests/authMiddleware.test.ts tests/bootstrapRoute.test.ts tests/database.test.ts tests/identity.test.ts tests/runtimeControls.test.ts tests/tools.test.ts",
+    "test:unit": "node --import tsx --test tests/auth.test.ts tests/authMiddleware.test.ts tests/bootstrapRateLimit.test.ts tests/bootstrapRoute.test.ts tests/database.test.ts tests/identity.test.ts tests/runtimeControls.test.ts tests/tools.test.ts",
     "test:integration:db": "node --import tsx scripts/runIntegrationDbTests.ts",
     "db:integration:reset": "node --import tsx scripts/runIntegrationDbTests.ts reset"
   },
@@ -27,6 +27,7 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "8.7.0",
     "jose": "6.2.12",
     "pg": "^8.23.0",
     "zod": "^4.6.2"

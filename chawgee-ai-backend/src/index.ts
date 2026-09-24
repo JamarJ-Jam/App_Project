@@ -9,7 +9,11 @@ import { createBriefingRouter } from './briefingRoute.js';
 import chawgeeOnboardingRoute from './chawgeeOnboardingRoute.js';
 import { database } from './db/database.js';
 import { createBootstrapRouter } from './auth/bootstrapRoute.js';
-import { createAuthenticationMiddleware } from './auth/authMiddleware.js';
+import {
+  createIdentityResolutionMiddleware,
+  createTokenAdmissionMiddleware,
+} from './auth/authMiddleware.js';
+import { createBootstrapSubjectLimiter } from './auth/bootstrapRateLimit.js';
 import { createTokenVerifier } from './auth/tokenVerifier.js';
 import { createIdentityService } from './services/identityService.js';
 import {
@@ -30,15 +34,22 @@ app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 const identityService = createIdentityService(database);
 let tokenVerifier: ReturnType<typeof createTokenVerifier> | undefined;
-const authenticationMiddleware = createAuthenticationMiddleware({
+const tokenAdmissionMiddleware = createTokenAdmissionMiddleware({
   verifyAccessToken: async (token) => {
     tokenVerifier ??= createTokenVerifier(runtimeConfig.auth);
     return tokenVerifier.verify(token);
   },
+});
+const bootstrapSubjectLimiter = createBootstrapSubjectLimiter();
+const identityResolutionMiddleware = createIdentityResolutionMiddleware({
   resolveIdentity: identityService.resolveOrProvision,
 });
 
-app.use(createBootstrapRouter(authenticationMiddleware));
+app.use(createBootstrapRouter(
+  tokenAdmissionMiddleware,
+  bootstrapSubjectLimiter,
+  identityResolutionMiddleware,
+));
 
 app.use(chawgeeOnboardingRoute);
 
