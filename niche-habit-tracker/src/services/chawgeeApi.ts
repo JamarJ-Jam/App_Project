@@ -1,4 +1,4 @@
-import { appConfig } from '../config';
+import { appConfig, assertChawgeeApiTransport } from '../config';
 
 export interface BootstrapAccount {
   id: string;
@@ -10,12 +10,28 @@ export interface BootstrapResponse {
   account: BootstrapAccount;
 }
 
-export const bootstrapChawgeeAccount = async (accessToken: string): Promise<BootstrapAccount> => {
+export const BOOTSTRAP_REQUEST_TIMEOUT_MS = 30_000;
+
+export const bootstrapChawgeeAccount = async (
+  accessToken: string,
+  externalSignal?: AbortSignal,
+): Promise<BootstrapAccount> => {
+  const controller = new AbortController();
+  const abortForExternalSignal = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener('abort', abortForExternalSignal, { once: true });
+  const timeout = setTimeout(() => controller.abort(), BOOTSTRAP_REQUEST_TIMEOUT_MS);
+
   try {
+    if (controller.signal.aborted) throw new Error('Bootstrap request was cancelled.');
+    // Revalidate immediately before creating the bearer request.
+    assertChawgeeApiTransport(appConfig.apiBaseUrl);
     const response = await fetch(`${appConfig.apiBaseUrl}/api/auth/bootstrap`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${accessToken}` },
+      signal: controller.signal,
     });
+    if (controller.signal.aborted) throw new Error('Bootstrap request was cancelled.');
 
     if (response.status === 401) throw new Error('Your authentication session is no longer valid.');
     if (response.status === 403) throw new Error('Your Chawgee account is currently restricted.');
@@ -28,6 +44,7 @@ export const bootstrapChawgeeAccount = async (accessToken: string): Promise<Boot
       typeof data.account.id !== 'string' ||
       data.account.status !== 'active'
     ) throw new Error('Unable to initialize your Chawgee account.');
+    if (controller.signal.aborted) throw new Error('Bootstrap request was cancelled.');
 
     return data.account;
   } catch (error) {
@@ -36,6 +53,9 @@ export const bootstrapChawgeeAccount = async (accessToken: string): Promise<Boot
       error.message === 'Your Chawgee account is currently restricted.'
     )) throw error;
     throw new Error('Unable to initialize your Chawgee account.');
+  } finally {
+    clearTimeout(timeout);
+    externalSignal?.removeEventListener('abort', abortForExternalSignal);
   }
 };
 

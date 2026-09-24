@@ -109,6 +109,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [authError, setAuthError] = useState<string | null>(null);
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
   const bootstrapPromises = useRef(new Map<string, Promise<AuthActionResult>>());
+  const bootstrapControllers = useRef(new Map<string, AbortController>());
   const authLifecycle = useRef(new AuthLifecycleCoordinator(supabaseStorage));
   const authCallback = useRef(new AuthCallbackCoordinator());
   const callbackRequests = useRef(new Map<string, { intent?: AuthCallbackIntent; promise: Promise<CallbackResult> }>());
@@ -163,7 +164,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return preserved;
   }, [publishRestriction]);
 
+  const abortBootstrapWork = (exceptKey?: string) => {
+    for (const [key, controller] of bootstrapControllers.current) {
+      if (key === exceptKey) continue;
+      controller.abort();
+      bootstrapControllers.current.delete(key);
+    }
+  };
+
   const invalidateAuthWork = () => {
+    abortBootstrapWork();
     authCallback.current.cancel();
     googleOperation.current = null;
     const owner = authLifecycle.current.nextOperation();
@@ -207,6 +217,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { status: 'verification_required' };
     }
     if (!session) {
+      abortBootstrapWork();
       authLifecycle.current.revokeAdmissionReceipt();
       authLifecycle.current.invalidate();
       try {
@@ -228,6 +239,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (structure?.status === 'unsupported_identity' || identity?.status === 'unsupported_identity' ||
         (linkedWithoutProvenance && !authLifecycle.current.hasAdmissionReceipt(session.user.id))) {
       // Revoke pending bootstrap even if the subject/token did not change.
+      abortBootstrapWork();
       authLifecycle.current.invalidate();
       clearAuthenticatedState();
       setAuthState('bootstrap_failed');
@@ -235,6 +247,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error('Unable to initialize your Chawgee account. Sign-in provider is not supported.');
     }
     if (identity?.status === 'verification_required') {
+      abortBootstrapWork();
       authLifecycle.current.invalidate();
       authLifecycle.current.beginSession(session.user.id, session.access_token);
       setUser(null);
@@ -248,11 +261,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const generation = authLifecycle.current.beginSession(session.user.id, session.access_token);
     const bootstrapKey = `${generation}:${session.access_token}`;
     const existing = bootstrapPromises.current.get(bootstrapKey);
+    abortBootstrapWork(bootstrapKey);
     if (existing) return existing;
 
+    const controller = new AbortController();
+    bootstrapControllers.current.set(bootstrapKey, controller);
     const bootstrap = (async (): Promise<AuthActionResult> => {
       try {
-        const account = await bootstrapChawgeeAccount(session.access_token);
+        const account = await bootstrapChawgeeAccount(session.access_token, controller.signal);
         if (!authLifecycle.current.isCurrent(generation, session.user.id, session.access_token)) {
           return { status: 'verification_required' };
         }
@@ -274,6 +290,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           : new Error('Unable to initialize your Chawgee account.');
       } finally {
         bootstrapPromises.current.delete(bootstrapKey);
+        if (bootstrapControllers.current.get(bootstrapKey) === controller) {
+          bootstrapControllers.current.delete(bootstrapKey);
+        }
       }
     })();
 
@@ -417,6 +436,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       mounted = false;
       ready.current = false;
+      abortBootstrapWork();
       callbackCoordinator.cancel();
       googleOperation.current = null;
       lifecycleCoordinator.nextOperation();
@@ -451,6 +471,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       : null;
     if (googleProvenance && !admittedGoogle) return Promise.resolve({ status: 'failed', reason: 'stale_operation' });
     const callbackProvider: IdentityProvider | undefined = admittedGoogle ? 'google' : intent === 'signup' ? 'email' : undefined;
+    abortBootstrapWork();
     authCallback.current.cancel();
     const owner = admittedGoogle?.owner ?? authLifecycle.current.nextOperation();
     if (!admittedGoogle) googleOperation.current = null;

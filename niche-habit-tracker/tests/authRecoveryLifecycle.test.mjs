@@ -40,7 +40,7 @@ const { outputText } = ts.transpileModule(source, {
 function harness(options = {}) {
   const disk = options.disk ?? { metadata: new Map(), sdkSession: null, app: new Map() };
   const failures = options.failures ?? {};
-  const calls = { bootstrap: [], exchange: 0, exchangeOptions: [], googleStart: 0, oauthOptions: [], browser: [], login: 0, signOut: [], writes: [], states: [], updateUser: [] };
+  const calls = { bootstrap: [], bootstrapSignals: [], bootstrapAborts: [], exchange: 0, exchangeOptions: [], googleStart: 0, oauthOptions: [], browser: [], login: 0, signOut: [], writes: [], states: [], updateUser: [] };
   const listeners = new Set();
   const storage = {
     async getItem(key) { if (failures.read) throw new Error('synthetic storage failure'); return disk.metadata.get(key) ?? null; },
@@ -148,6 +148,7 @@ function harness(options = {}) {
   const exports = {};
   runInNewContext(outputText, {
     exports,
+    AbortController,
     require(name) {
       if (name === 'react') return react;
       if (name === '@react-native-async-storage/async-storage') return {
@@ -177,9 +178,20 @@ function harness(options = {}) {
       if (name.endsWith('/passwordRecoveryCompletion')) return {
         isValidRecoveryPassword: (password) => password.trim().length > 0,
       };
-      if (name.endsWith('/chawgeeApi')) return { bootstrapChawgeeAccount: async (token) => {
+      if (name.endsWith('/chawgeeApi')) return { bootstrapChawgeeAccount: async (token, signal) => {
         calls.bootstrap.push(token);
-        if (options.bootstrapWait) await options.bootstrapWait.promise;
+        calls.bootstrapSignals.push(signal);
+        if (options.bootstrapWait) {
+          if (signal?.aborted) throw new Error('bootstrap aborted');
+          await new Promise((resolve, reject) => {
+            const abort = () => { calls.bootstrapAborts.push(token); reject(new Error('bootstrap aborted')); };
+            signal?.addEventListener('abort', abort, { once: true });
+            options.bootstrapWait.promise.then(() => {
+              signal?.removeEventListener('abort', abort);
+              resolve();
+            });
+          });
+        }
         if (options.bootstrapFails) throw new Error('Unable to initialize your Chawgee account.');
         return { id: options.accountsByToken?.[token] ?? 'backend-account-id' };
       } };
@@ -495,6 +507,7 @@ test('logout during ordinary bootstrap prevents a late authenticated commit', as
   await logout;
   assert.equal(h.value.authState, 'unauthenticated');
   assert.equal(h.calls.states.includes('authenticated'), false);
+  assert.deepEqual(h.calls.bootstrapAborts, ['new-login-synthetic-token']);
 });
 
 test('refresh arriving during ordinary bootstrap invalidates the older token work', async () => {
@@ -511,6 +524,8 @@ test('refresh arriving during ordinary bootstrap invalidates the older token wor
   assert.equal(h.calls.bootstrap.length, 2);
   assert.equal(h.value.authState, 'authenticated');
   assert.equal(h.calls.states.filter((state) => state === 'authenticated').length, 1);
+  assert.equal(h.calls.bootstrapSignals[0].aborted, true);
+  assert.equal(h.calls.bootstrapSignals[1].aborted, false);
 });
 
 test('external SDK logout still invalidates ordinary bootstrap while it is pending', async () => {
@@ -526,6 +541,7 @@ test('external SDK logout still invalidates ordinary bootstrap while it is pendi
   assert.equal(h.value.authState, 'unauthenticated');
   assert.equal(h.calls.states.includes('authenticated'), false);
   assert.equal(h.disk.metadata.has(admissionReceiptKey), false);
+  assert.deepEqual(h.calls.bootstrapAborts, ['new-login-synthetic-token']);
 });
 
 const recoveryUrl = (code = 'explicit-recovery') => `${redirectModule.AUTH_CALLBACK_URI}?type=recovery&code=${code}`;
@@ -1079,6 +1095,19 @@ test('guest transition invalidates a pending authenticated bootstrap', async () 
   assert.equal(h.calls.states.includes('authenticated'), false);
   assert.equal(h.disk.sdkSession, null);
   assert.equal(h.disk.metadata.has(admissionReceiptKey), false);
+  assert.deepEqual(h.calls.bootstrapAborts, ['new-login-synthetic-token']);
+});
+
+test('unmount aborts a pending bootstrap without allowing authenticated state', async () => {
+  const bootstrapWait = deferred();
+  const h = await started({ bootstrapWait });
+  const login = h.value.signIn('new@example.test', 'synthetic-password');
+  await flush();
+  h.unmount();
+  bootstrapWait.resolve();
+  assert.equal((await login).status, 'verification_required');
+  assert.deepEqual(h.calls.bootstrapAborts, ['new-login-synthetic-token']);
+  assert.equal(h.calls.states.includes('authenticated'), false);
 });
 
 test('legacy guest preference plus persisted linked session is resolved to guest only after cleanup', async () => {
