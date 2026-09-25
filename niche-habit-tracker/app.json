@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "niche-habit-tracker",
+    "name": "My Chawgee",
     "slug": "my-chawgee",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -12,9 +12,9 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#021739",
         "foregroundImage": "./assets/app-icon/chawgee-adaptive-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
+        "backgroundImage": "./assets/app-icon/chawgee-adaptive-background.png",
         "monochromeImage": "./assets/app-icon/chawgee-monochrome.png"
       },
       "permissions": [
